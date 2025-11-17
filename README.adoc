@@ -1,0 +1,348 @@
+= Fulcro RAD Datalevin
+
+A database adapter plugin for https://fulcro.fulcrologic.com/[Fulcro RAD] that provides support for https://github.com/juji-io/datalevin[Datalevin], an embedded Datalog database.
+
+== Features
+
+* Automatic schema generation from RAD attributes
+* Save and delete middleware for RAD forms
+* Automatic Pathom3 resolver generation
+* Support for all RAD attribute types
+* Connection and database management utilities
+* Testing utilities for in-memory databases
+
+== Installation
+
+Add to your `deps.edn`:
+
+[source,clojure]
+----
+{:deps {com.fulcrologic/fulcro-rad-datalevin {:git/url "https://github.com/fulcrologic/fulcro-rad-datalevin"
+                                               :git/sha "LATEST_SHA"}}}
+----
+
+== Quick Start
+
+=== 1. Define RAD Attributes
+
+[source,clojure]
+----
+(ns com.example.model.account
+  (:require
+    [com.fulcrologic.rad.attributes :as attr :refer [defattr]]
+    [com.fulcrologic.rad.database-adapters.datalevin-options :as dlo]))
+
+(defattr id :account/id :uuid
+  {::attr/schema     :main
+   ::attr/identity?  true})
+
+(defattr name :account/name :string
+  {::attr/schema      :main
+   ::attr/identities  #{:account/id}
+   ::attr/required?   true})
+
+(defattr email :account/email :string
+  {::attr/schema      :main
+   ::attr/identities  #{:account/id}
+   ;; Custom Datalevin schema override
+   ::dlo/attribute-schema {:db/unique :db.unique/value}})
+
+(def attributes [id name email])
+----
+
+=== 2. Start Database Connection
+
+[source,clojure]
+----
+(ns com.example.components.database
+  (:require
+    [com.fulcrologic.rad.database-adapters.datalevin :as dl]
+    [com.example.model.account :as account]))
+
+(defonce connections (atom {}))
+
+(defn start! []
+  (let [conn (dl/start-database!
+               {:path       "/var/data/my-app"
+                :schema     :main
+                :attributes account/attributes})]
+    (swap! connections assoc :main conn)))
+
+(defn stop! []
+  (doseq [[_ conn] @connections]
+    (dl/stop-database! conn))
+  (reset! connections {}))
+----
+
+=== 3. Configure Pathom Parser
+
+[source,clojure]
+----
+(ns com.example.components.parser
+  (:require
+    [com.fulcrologic.rad.database-adapters.datalevin :as dl]
+    [com.fulcrologic.rad.form :as form]
+    [com.wsscode.pathom3.connect.indexes :as pci]
+    [com.example.model.account :as account]
+    [com.example.components.database :as db]))
+
+(def all-attributes
+  (vec (concat account/attributes
+               ;; other model attributes
+               )))
+
+(def auto-resolvers
+  (dl/generate-resolvers all-attributes))
+
+(def indexes
+  (pci/register
+    (concat
+      auto-resolvers
+      ;; custom resolvers
+      )))
+
+;; Add database plugin
+(def env
+  (-> indexes
+      (assoc ::dl/connections @db/connections)))
+----
+
+=== 4. Configure Form Middleware
+
+[source,clojure]
+----
+(ns com.example.components.middleware
+  (:require
+    [com.fulcrologic.rad.database-adapters.datalevin :as dl]
+    [com.fulcrologic.rad.middleware.save-middleware :as save-mw]
+    [com.fulcrologic.rad.middleware.delete-middleware :as delete-mw]))
+
+(def save-middleware
+  (-> (dl/wrap-datalevin-save)
+      (save-mw/wrap-rewrite-values)))
+
+(def delete-middleware
+  (dl/wrap-datalevin-delete))
+----
+
+== API Reference
+
+=== Schema Generation
+
+`automatic-schema`:: Generate Datalevin schema from RAD attributes
++
+[source,clojure]
+----
+(dl/automatic-schema :main account/attributes)
+;; => {:account/id {:db/valueType :db.type/uuid
+;;                  :db/unique :db.unique/identity}
+;;     :account/name {:db/valueType :db.type/string}
+;;     :account/email {:db/valueType :db.type/string}}
+----
+
+=== Database Management
+
+`start-database!`:: Start a database connection with automatic schema
++
+[source,clojure]
+----
+(dl/start-database!
+  {:path       "/var/data/mydb"
+   :schema     :main
+   :attributes all-attributes
+   :auto-schema? true})
+----
+
+`stop-database!`:: Close a database connection
++
+[source,clojure]
+----
+(dl/stop-database! conn)
+----
+
+`empty-db-connection`:: Create an in-memory database for testing
++
+[source,clojure]
+----
+(dl/empty-db-connection :main account/attributes)
+----
+
+=== Middleware
+
+`wrap-datalevin-save`:: Form save middleware that transacts deltas to Datalevin
++
+[source,clojure]
+----
+(def save-middleware (dl/wrap-datalevin-save))
+;; or with options
+(def save-middleware (dl/wrap-datalevin-save {:default-schema :main}))
+----
+
+`wrap-datalevin-delete`:: Form delete middleware that retracts entities
++
+[source,clojure]
+----
+(def delete-middleware (dl/wrap-datalevin-delete))
+----
+
+=== Resolver Generation
+
+`generate-resolvers`:: Generate Pathom3 resolvers from attributes
++
+[source,clojure]
+----
+(def resolvers (dl/generate-resolvers all-attributes))
+----
+
+`id-resolver`:: Generate a single identity resolver
++
+[source,clojure]
+----
+(dl/id-resolver account/id [account/name account/email])
+----
+
+=== Pathom3 Integration
+
+`pathom-plugin`:: Create a Pathom3 plugin for database access
++
+[source,clojure]
+----
+(dl/pathom-plugin connections)
+----
+
+`mock-resolver-env`:: Create mock environment for testing
++
+[source,clojure]
+----
+(dl/mock-resolver-env {:main conn})
+----
+
+=== Query Utilities
+
+`q`:: Execute Datalog queries
++
+[source,clojure]
+----
+(dl/q '[:find ?e ?name
+        :where [?e :account/name ?name]]
+      db)
+----
+
+`pull`:: Pull entity data
++
+[source,clojure]
+----
+(dl/pull db [:account/name :account/email] eid)
+----
+
+`pull-many`:: Pull multiple entities
++
+[source,clojure]
+----
+(dl/pull-many db [:account/name] eids)
+----
+
+== Configuration Options
+
+The `datalevin-options` namespace provides configuration keys:
+
+[source,clojure]
+----
+(require '[com.fulcrologic.rad.database-adapters.datalevin-options :as dlo])
+
+;; Environment keys (used in Pathom env)
+::dlo/connections  ; Map of schema -> connection
+::dlo/databases    ; Map of schema -> current db value
+
+;; Attribute-level options
+::dlo/attribute-schema   ; Override Datalevin schema
+::dlo/native-id?         ; Use Datalevin's internal entity IDs
+::dlo/generate-resolvers? ; Disable automatic resolver generation
+
+;; Schema options
+::dlo/schema            ; Schema name for this attribute
+::dlo/transact-options  ; Options passed to transact!
+----
+
+== Type Mapping
+
+RAD types are automatically mapped to Datalevin types:
+
+[cols="1,1"]
+|===
+| RAD Type | Datalevin Type
+
+| `:string`
+| `:db.type/string`
+
+| `:password`
+| `:db.type/string`
+
+| `:boolean`
+| `:db.type/boolean`
+
+| `:int`
+| `:db.type/long`
+
+| `:long`
+| `:db.type/long`
+
+| `:double`
+| `:db.type/double`
+
+| `:float`
+| `:db.type/float`
+
+| `:bigdec`
+| `:db.type/bigdec`
+
+| `:instant`
+| `:db.type/instant`
+
+| `:keyword`
+| `:db.type/keyword`
+
+| `:symbol`
+| `:db.type/symbol`
+
+| `:uuid`
+| `:db.type/uuid`
+
+| `:ref`
+| `:db.type/ref`
+
+| `:tuple`
+| `:db.type/tuple`
+|===
+
+== Differences from Datomic Adapter
+
+Key differences from `fulcro-rad-datomic`:
+
+* **Schema format**: Datalevin uses map-of-maps schema format, not transaction vectors
+* **No temporal database**: Datalevin doesn't maintain history by default
+* **Embedded database**: No separate transactor process needed
+* **Connection management**: Uses `get-conn` instead of `connect`
+* **Schema updates**: Schema passed at connection time, updated via `update-schema`
+
+== Development
+
+=== Running Tests
+
+[source,bash]
+----
+clj -X:test
+----
+
+=== Building
+
+[source,bash]
+----
+clj -X:jar
+----
+
+== License
+
+Copyright (c) Fulcrologic, LLC
+
+Distributed under the MIT License.

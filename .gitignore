@@ -1,0 +1,26 @@
+# Clojure
+.cpcache/
+.nrepl-port
+.lein-*
+*.jar
+target/
+classes/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.calva/
+.lsp/
+.clj-kondo/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test databases
+/tmp/datalevin-test-*
+
+# Local development
+.local/
+.env
