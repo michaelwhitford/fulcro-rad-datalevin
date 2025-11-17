@@ -331,7 +331,7 @@ Key differences from `fulcro-rad-datomic`:
 
 [source,bash]
 ----
-clj -X:test
+clj -M:dev:run-tests
 ----
 
 === Building
@@ -343,6 +343,6 @@ clj -X:jar
 
 == License
 
-Copyright (c) Fulcrologic, LLC
+Copyright (c) Michael Whitford
 
 Distributed under the MIT License.

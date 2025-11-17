@@ -7,6 +7,7 @@
     [com.fulcrologic.rad.database-adapters.datalevin-options :as dlo]
     [com.fulcrologic.rad.form :as form]
     [com.fulcrologic.rad.ids :refer [new-uuid]]
+    [com.wsscode.pathom3.connect.operation :as pco]
     [datalevin.core :as d]))
 
 ;; ================================================================================
@@ -170,7 +171,7 @@
                                    :account/email {:before nil :after "alice@test.com"}}}
           txn   (dl/delta->txn delta)]
       (is (= 1 (count txn)))
-      (is (= {:db/id {:account/id id}
+      (is (= {:db/id [:account/id id]
               :account/name "Alice"
               :account/email "alice@test.com"}
              (first txn)))))
@@ -305,14 +306,14 @@
   (testing "generates resolvers for identity attributes"
     (let [resolvers (dl/generate-resolvers test-attributes)]
       (is (seq resolvers))
-      (is (some #(= :account/id (first (::pco/input (meta %)))) resolvers))
-      (is (some #(= :item/id (first (::pco/input (meta %)))) resolvers))))
+      (is (some #(= :account/id (first (::pco/input (:config %)))) resolvers))
+      (is (some #(= :item/id (first (::pco/input (:config %)))) resolvers))))
 
   (testing "generated resolvers have correct output"
     (let [resolvers    (dl/generate-resolvers test-attributes)
-          account-res  (first (filter #(= :account/id (first (::pco/input (meta %))))
+          account-res  (first (filter #(= :account/id (first (::pco/input (:config %))))
                                        resolvers))
-          outputs      (::pco/output (meta account-res))]
+          outputs      (::pco/output (:config account-res))]
       (is (some? account-res))
       (is (contains? (set outputs) :account/name))
       (is (contains? (set outputs) :account/email))
@@ -377,7 +378,7 @@
                          :where [?e :account/id ?id]
                                 [?e :account/name ?name]]
                        db id)]
-      (is (= [["Query Test"]] result))
+      (is (= #{["Query Test"]} result))
       (d/close conn)))
 
   (testing "pull retrieves entity data"

@@ -168,7 +168,7 @@
   "Convert Fulcro tempid to negative integer for Datalevin transaction."
   [id]
   (if (tempid/tempid? id)
-    (- (hash id))
+    (- (Math/abs (hash id)))
     id))
 
 (defn- ident->lookup-ref
@@ -190,7 +190,7 @@
   [key-attr id delta]
   (let [entity-id (if (tempid/tempid? id)
                     (tempid->txid id)
-                    {key-attr id})]
+                    [key-attr id])]
     (reduce-kv
       (fn [txn-data attr {:keys [before after]}]
         (cond
