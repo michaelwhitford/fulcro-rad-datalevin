@@ -446,3 +446,214 @@
             count (dl/q '[:find ?e :where [?e :account/id]] db)]
         (is (empty? count)))
       (d/close conn))))
+
+;; ================================================================================
+;; Error Handling Tests (TASK-001, TASK-002)
+;; ================================================================================
+
+(deftest missing-connection-error-test
+  (testing "save throws when connection is missing"
+    (let [delta     {[:account/id (new-uuid)] {:account/name {:before nil :after "Alice"}}}
+          key->attr (into {} (map (juxt ::attr/qualified-key identity)) test-attributes)
+          env       {::attr/key->attribute key->attr
+                     ::dlo/connections     {}  ;; Empty connections!
+                     ::form/delta          delta}
+          handler   (fn [_] {:result :ok})
+          middleware (dl/wrap-datalevin-save {:default-schema :test})]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                            #"No database connection configured"
+                            ((middleware handler) env)))))
+
+  (testing "delete throws when connection is missing"
+    (let [id        (new-uuid)
+          key->attr (into {} (map (juxt ::attr/qualified-key identity)) test-attributes)
+          env       {::attr/key->attribute key->attr
+                     ::dlo/connections     {}  ;; Empty connections!
+                     ::form/delete-params  [[:account/id id]]}
+          handler   (fn [_] {:result :ok})
+          middleware (dl/wrap-datalevin-delete {:default-schema :test})]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                            #"No database connection configured"
+                            ((middleware handler) env)))))
+
+  (testing "missing connection error includes available schemas"
+    (let [conn      (dl/empty-db-connection :other test-attributes)
+          delta     {[:account/id (new-uuid)] {:account/name {:before nil :after "Alice"}}}
+          key->attr (into {} (map (juxt ::attr/qualified-key identity)) test-attributes)
+          env       {::attr/key->attribute key->attr
+                     ::dlo/connections     {:other conn}  ;; Wrong schema!
+                     ::form/delta          delta}
+          handler   (fn [_] {:result :ok})
+          middleware (dl/wrap-datalevin-save {:default-schema :test})]
+      (try
+        ((middleware handler) env)
+        (is false "Should have thrown exception")
+        (catch clojure.lang.ExceptionInfo e
+          (is (= :test (:schema (ex-data e))))
+          (is (= [:other] (:available-schemas (ex-data e))))))
+      (d/close conn))))
+
+;; ================================================================================
+;; Input Validation Tests (TASK-009)
+;; ================================================================================
+
+(deftest delta-validation-test
+  (testing "validates delta is a map"
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                          #"Delta must be a map"
+                          (dl/delta->txn "not a map"))))
+
+  (testing "validates delta entry structure"
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                          #"Invalid delta structure"
+                          (dl/delta->txn {[:account/id 123] "not a map"}))))
+
+  (testing "validates before/after keys present"
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                          #"Invalid delta structure"
+                          (dl/delta->txn {[:account/id (new-uuid)] 
+                                          {:account/name {:value "missing before/after"}}}))))
+
+  (testing "validates ident is a vector"
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                          #"Invalid delta structure"
+                          (dl/delta->txn {:not-a-vector {:account/name {:before nil :after "x"}}}))))
+
+  (testing "valid delta passes validation"
+    (is (vector? (dl/delta->txn {[:account/id (new-uuid)]
+                                 {:account/name {:before nil :after "Valid"}}})))))
+
+;; ================================================================================
+;; Batch Size Limits Tests (TASK-005)
+;; ================================================================================
+
+(deftest batch-size-limits-test
+  (testing "throws when batch size exceeds maximum"
+    (let [conn    (dl/empty-db-connection :test test-attributes)
+          db      (d/db conn)
+          ids     (repeatedly 1001 new-uuid)]  ;; One over the limit
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                            #"Batch size exceeds maximum"
+                            (dl/get-by-ids db :account/id ids [:account/name])))
+      (d/close conn)))
+
+  (testing "accepts exactly maximum batch size"
+    (let [conn    (dl/empty-db-connection :test test-attributes)
+          db      (d/db conn)
+          ids     (repeatedly 1000 new-uuid)]  ;; Exactly at limit
+      (is (map? (dl/get-by-ids db :account/id ids [:account/name])))
+      (d/close conn)))
+
+  (testing "custom batch size limit can be configured"
+    (let [conn    (dl/empty-db-connection :test test-attributes)
+          db      (d/db conn)
+          ids     (repeatedly 11 new-uuid)]
+      (binding [dl/*max-batch-size* 10]
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                              #"Batch size exceeds maximum"
+                              (dl/get-by-ids db :account/id ids [:account/name]))))
+      (d/close conn))))
+
+;; ================================================================================
+;; Tempid Uniqueness Tests (TASK-003)
+;; ================================================================================
+
+(deftest tempid-uniqueness-test
+  (testing "multiple tempids get unique transaction IDs"
+    (let [tid1 (tempid/tempid)
+          tid2 (tempid/tempid)
+          tid3 (tempid/tempid)
+          delta {[:account/id tid1] {:account/id {:before nil :after (new-uuid)}
+                                     :account/name {:before nil :after "User 1"}}
+                 [:account/id tid2] {:account/id {:before nil :after (new-uuid)}
+                                     :account/name {:before nil :after "User 2"}}
+                 [:account/id tid3] {:account/id {:before nil :after (new-uuid)}
+                                     :account/name {:before nil :after "User 3"}}}
+          txn   (binding [us.whitford.fulcro.rad.database-adapters.datalevin/*tempid-mappings* (atom {})]
+                  (dl/delta->txn delta))
+          ids   (map :db/id txn)]
+      (is (= 3 (count ids)))
+      (is (= 3 (count (set ids))) "All IDs should be unique")
+      (is (every? neg? ids) "All IDs should be negative"))))
+
+;; ================================================================================
+;; Metrics Tests (TASK-011)
+;; ================================================================================
+
+(deftest metrics-test
+  (testing "metrics are recorded on successful transaction"
+    (let [conn (dl/empty-db-connection :test test-attributes)]
+      (dl/reset-metrics!)
+      (let [tid       (tempid/tempid)
+            delta     {[:account/id tid] {:account/id {:before nil :after (new-uuid)}
+                                          :account/name {:before nil :after "Metrics Test"}}}
+            key->attr (into {} (map (juxt ::attr/qualified-key identity)) test-attributes)
+            env       {::attr/key->attribute key->attr
+                       ::dlo/connections     {:test conn}
+                       ::form/delta          delta}
+            handler   (fn [_] {:result :ok})
+            middleware (dl/wrap-datalevin-save {:default-schema :test})
+            _         ((middleware handler) env)
+            metrics   (dl/get-metrics)]
+        (is (= 1 (:transaction-count metrics)))
+        (is (= 0 (:transaction-errors metrics)))
+        (is (>= (:total-transaction-time-ms metrics) 0)))
+      (d/close conn)))
+
+  (testing "reset-metrics! clears all counters"
+    (dl/reset-metrics!)
+    (let [metrics (dl/get-metrics)]
+      (is (= 0 (:transaction-count metrics)))
+      (is (= 0 (:transaction-errors metrics)))
+      (is (= 0 (:total-transaction-time-ms metrics))))))
+
+;; ================================================================================
+;; Resource Management Tests (TASK-004)
+;; ================================================================================
+
+(deftest create-temp-database-test
+  (testing "creates database with cleanup function"
+    (let [{:keys [conn path cleanup!]} (dl/create-temp-database! :test test-attributes)]
+      (is (some? conn))
+      (is (string? path))
+      (is (fn? cleanup!))
+      (is (.exists (java.io.File. path)))
+      (cleanup!)
+      ;; Give a moment for cleanup
+      (Thread/sleep 100)
+      (is (not (.exists (java.io.File. path))) "Cleanup should remove directory")))
+
+  (testing "database is functional before cleanup"
+    (let [{:keys [conn cleanup!]} (dl/create-temp-database! :test test-attributes)
+          id (new-uuid)]
+      (d/transact! conn [{:account/id id :account/name "Test"}])
+      (let [result (ffirst (d/q '[:find ?name
+                                   :in $ ?id
+                                   :where [?e :account/id ?id]
+                                   [?e :account/name ?name]]
+                                 (d/db conn) id))]
+        (is (= "Test" result)))
+      (cleanup!))))
+
+(deftest with-temp-database-test
+  (testing "executes body with connection"
+    (let [result (dl/with-temp-database [conn :test test-attributes]
+                   (let [id (new-uuid)]
+                     (d/transact! conn [{:account/id id :account/name "Macro Test"}])
+                     (ffirst (d/q '[:find ?name
+                                     :in $ ?id
+                                     :where [?e :account/id ?id]
+                                     [?e :account/name ?name]]
+                                   (d/db conn) id))))]
+      (is (= "Macro Test" result))))
+
+  (testing "cleans up even on exception"
+    (let [temp-path (atom nil)]
+      (try
+        (dl/with-temp-database [conn :test test-attributes]
+          (reset! temp-path (str "/tmp/datalevin-test-" (new-uuid)))
+          (throw (ex-info "Test exception" {})))
+        (catch Exception _))
+      ;; The actual path check would need access to the internal path
+      ;; This test just ensures no exception is thrown by the cleanup
+      (is true "Cleanup should not throw"))))

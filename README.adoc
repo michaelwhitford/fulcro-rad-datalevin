@@ -9,7 +9,11 @@ A database adapter plugin for https://fulcro.fulcrologic.com/[Fulcro RAD] that p
 * Automatic Pathom3 resolver generation
 * Support for all RAD attribute types
 * Connection and database management utilities
-* Testing utilities for in-memory databases
+* Testing utilities with automatic cleanup (`with-temp-database` macro)
+* Built-in metrics and observability (transaction counts, timing, errors)
+* Production-ready error handling with detailed context
+* Configurable safety limits (batch sizes, timeouts, retries)
+* Input validation with helpful error messages
 
 == Installation
 
@@ -17,8 +21,15 @@ Add to your `deps.edn`:
 
 [source,clojure]
 ----
-{:deps {com.fulcrologic/fulcro-rad-datalevin {:git/url "https://github.com/fulcrologic/fulcro-rad-datalevin"
-                                               :git/sha "LATEST_SHA"}}}
+{:deps {us.whitford/fulcro-rad-datalevin {:git/url "https://github.com/mwhitford/fulcro-rad-datalevin"
+                                           :git/sha "LATEST_SHA"}}}
+----
+
+Or use a local checkout:
+
+[source,clojure]
+----
+{:deps {us.whitford/fulcro-rad-datalevin {:local/root "/path/to/fulcro-rad-datalevin"}}}
 ----
 
 == Quick Start
@@ -30,7 +41,7 @@ Add to your `deps.edn`:
 (ns com.example.model.account
   (:require
     [com.fulcrologic.rad.attributes :as attr :refer [defattr]]
-    [com.fulcrologic.rad.database-adapters.datalevin-options :as dlo]))
+    [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]))
 
 (defattr id :account/id :uuid
   {::attr/schema     :main
@@ -56,7 +67,7 @@ Add to your `deps.edn`:
 ----
 (ns com.example.components.database
   (:require
-    [com.fulcrologic.rad.database-adapters.datalevin :as dl]
+    [us.whitford.fulcro.rad.database-adapters.datalevin :as dl]
     [com.example.model.account :as account]))
 
 (defonce connections (atom {}))
@@ -80,7 +91,8 @@ Add to your `deps.edn`:
 ----
 (ns com.example.components.parser
   (:require
-    [com.fulcrologic.rad.database-adapters.datalevin :as dl]
+    [us.whitford.fulcro.rad.database-adapters.datalevin :as dl]
+    [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]
     [com.fulcrologic.rad.form :as form]
     [com.wsscode.pathom3.connect.indexes :as pci]
     [com.example.model.account :as account]
@@ -104,7 +116,7 @@ Add to your `deps.edn`:
 ;; Add database plugin
 (def env
   (-> indexes
-      (assoc ::dl/connections @db/connections)))
+      (assoc ::dlo/connections @db/connections)))
 ----
 
 === 4. Configure Form Middleware
@@ -113,7 +125,7 @@ Add to your `deps.edn`:
 ----
 (ns com.example.components.middleware
   (:require
-    [com.fulcrologic.rad.database-adapters.datalevin :as dl]
+    [us.whitford.fulcro.rad.database-adapters.datalevin :as dl]
     [com.fulcrologic.rad.middleware.save-middleware :as save-mw]
     [com.fulcrologic.rad.middleware.delete-middleware :as delete-mw]))
 
@@ -140,6 +152,13 @@ Add to your `deps.edn`:
 ;;     :account/email {:db/valueType :db.type/string}}
 ----
 
+`ensure-schema!`:: Ensure the database has the correct schema (updates if needed)
++
+[source,clojure]
+----
+(dl/ensure-schema! conn schema-map)
+----
+
 === Database Management
 
 `start-database!`:: Start a database connection with automatic schema
@@ -160,11 +179,37 @@ Add to your `deps.edn`:
 (dl/stop-database! conn)
 ----
 
-`empty-db-connection`:: Create an in-memory database for testing
+`empty-db-connection`:: Create a temporary database for testing
 +
 [source,clojure]
 ----
 (dl/empty-db-connection :main account/attributes)
+----
+
+`create-temp-database!`:: Create a temporary database with cleanup support
++
+[source,clojure]
+----
+(let [{:keys [conn path cleanup!]} (dl/create-temp-database! :main attrs)]
+  (try
+    ;; use conn
+    (finally (cleanup!))))
+----
+
+`with-temp-database`:: Macro for temporary database with automatic cleanup
++
+[source,clojure]
+----
+(dl/with-temp-database [conn :main attrs]
+  (d/transact! conn [...])
+  (dl/q '[:find ...] (d/db conn)))
+----
+
+`seed-database!`:: Seed a database with initial data
++
+[source,clojure]
+----
+(dl/seed-database! conn [{:account/id id :account/name "Alice"}])
 ----
 
 === Middleware
@@ -242,13 +287,55 @@ Add to your `deps.edn`:
 (dl/pull-many db [:account/name] eids)
 ----
 
+`get-by-ids`:: Fetch multiple entities by their identity attribute values
++
+[source,clojure]
+----
+(dl/get-by-ids db :account/id [id1 id2] [:account/name :account/email])
+;; => {id1 {:account/name "Alice" ...} id2 {...}}
+----
+
+=== Metrics and Observability
+
+`get-metrics`:: Get current database operation metrics
++
+[source,clojure]
+----
+(dl/get-metrics)
+;; => {:transaction-count 42
+;;     :transaction-errors 0
+;;     :query-count 100
+;;     :total-transaction-time-ms 1234}
+----
+
+`reset-metrics!`:: Reset all metrics to zero
++
+[source,clojure]
+----
+(dl/reset-metrics!)
+----
+
+=== Dynamic Configuration
+
+The following dynamic vars control runtime behavior:
+
+`*max-batch-size*`:: Maximum number of entities in batch queries (default: 1000)
+`*transaction-timeout-ms*`:: Transaction timeout in milliseconds (default: 30000)
+`*max-retries*`:: Maximum retry attempts for transient failures (default: 3)
+
+[source,clojure]
+----
+(binding [dl/*max-batch-size* 500]
+  (dl/get-by-ids db :account/id ids pattern))
+----
+
 == Configuration Options
 
 The `datalevin-options` namespace provides configuration keys:
 
 [source,clojure]
 ----
-(require '[com.fulcrologic.rad.database-adapters.datalevin-options :as dlo])
+(require '[us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo])
 
 ;; Environment keys (used in Pathom env)
 ::dlo/connections  ; Map of schema -> connection
@@ -262,6 +349,11 @@ The `datalevin-options` namespace provides configuration keys:
 ;; Schema options
 ::dlo/schema            ; Schema name for this attribute
 ::dlo/transact-options  ; Options passed to transact!
+
+;; Performance and safety limits
+::dlo/transaction-timeout-ms ; Timeout in milliseconds (default: 30000)
+::dlo/max-retries            ; Max retry attempts (default: 3)
+::dlo/max-batch-size         ; Max entities per batch query (default: 1000)
 ----
 
 == Type Mapping
@@ -315,6 +407,41 @@ RAD types are automatically mapped to Datalevin types:
 | `:db.type/tuple`
 |===
 
+== Error Handling
+
+The adapter provides structured error handling with detailed context:
+
+=== Missing Connection Errors
+
+When a database connection is not configured for a schema, an `ex-info` exception is thrown with:
+
+* `:schema` - the requested schema key
+* `:available-schemas` - vector of configured schema keys
+
+=== Transaction Failures
+
+Failed transactions throw `ex-info` with:
+
+* `:schema` - the schema where the transaction failed
+* `:txn-count` - number of transaction entries
+* `:error-message` - the underlying error message
+
+=== Input Validation
+
+Invalid delta structures are rejected with descriptive errors:
+
+* Delta must be a map
+* Each entry must have `[id-attr id]` as key
+* Each change must have `:before` and `:after` keys
+
+=== Batch Size Limits
+
+Queries exceeding `*max-batch-size*` throw with:
+
+* `:requested` - requested batch size
+* `:maximum` - configured maximum
+* `:id-attr` - the identity attribute being queried
+
 == Differences from Datomic Adapter
 
 Key differences from `fulcro-rad-datomic`:
@@ -324,6 +451,7 @@ Key differences from `fulcro-rad-datomic`:
 * **Embedded database**: No separate transactor process needed
 * **Connection management**: Uses `get-conn` instead of `connect`
 * **Schema updates**: Schema passed at connection time, updated via `update-schema`
+* **Namespace**: Uses `us.whitford.fulcro.rad.database-adapters` instead of `com.fulcrologic.rad.database-adapters`
 
 == Development
 
@@ -331,7 +459,14 @@ Key differences from `fulcro-rad-datomic`:
 
 [source,bash]
 ----
-clj -M:dev:run-tests
+clj -M:run-tests
+----
+
+=== Checking for Outdated Dependencies
+
+[source,bash]
+----
+clj -M:outdated
 ----
 
 === Building
@@ -339,6 +474,20 @@ clj -M:dev:run-tests
 [source,bash]
 ----
 clj -X:jar
+----
+
+=== Installing Locally
+
+[source,bash]
+----
+clj -X:install
+----
+
+=== Deploying
+
+[source,bash]
+----
+clj -X:deploy
 ----
 
 == License

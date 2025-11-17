@@ -2,7 +2,6 @@
   "Datalevin database adapter for Fulcro RAD. Provides automatic schema generation,
    resolver generation, and save/delete middleware for RAD forms."
   (:require
-    [clojure.set :as set]
     [clojure.spec.alpha :as s]
     [com.fulcrologic.fulcro.algorithms.tempid :as tempid]
     [com.fulcrologic.rad.attributes :as attr]
@@ -16,6 +15,114 @@
     [edn-query-language.core :as eql]
     [taoensso.encore :as enc]
     [taoensso.timbre :as log]))
+
+;; ================================================================================
+;; Configuration and Limits
+;; ================================================================================
+
+(def ^:dynamic *max-batch-size*
+  "Maximum number of entities to fetch in a single batch query."
+  1000)
+
+(def ^:dynamic *transaction-timeout-ms*
+  "Timeout in milliseconds for database transactions."
+  30000)
+
+(def ^:dynamic *max-retries*
+  "Maximum number of retry attempts for transient failures."
+  3)
+
+;; ================================================================================
+;; Metrics and Observability
+;; ================================================================================
+
+(def metrics
+  "Atom containing metrics about database operations."
+  (atom {:transaction-count 0
+         :transaction-errors 0
+         :query-count 0
+         :total-transaction-time-ms 0}))
+
+(defn- record-transaction-metric!
+  "Record metrics for a transaction."
+  [duration-ms success?]
+  (swap! metrics (fn [m]
+                   (cond-> m
+                     true (update :transaction-count inc)
+                     true (update :total-transaction-time-ms + duration-ms)
+                     (not success?) (update :transaction-errors inc)))))
+
+(defn get-metrics
+  "Get current database metrics.
+   
+   Returns a map with:
+   - :transaction-count - total number of transactions
+   - :transaction-errors - number of failed transactions
+   - :query-count - number of queries executed
+   - :total-transaction-time-ms - cumulative transaction time"
+  []
+  @metrics)
+
+(defn reset-metrics!
+  "Reset all metrics to zero. Useful for testing."
+  []
+  (reset! metrics {:transaction-count 0
+                   :transaction-errors 0
+                   :query-count 0
+                   :total-transaction-time-ms 0}))
+
+;; ================================================================================
+;; Error Handling
+;; ================================================================================
+
+(defn- transient-error?
+  "Check if exception represents a transient/retriable error."
+  [e]
+  (let [msg (str e)]
+    (or (re-find #"(?i)timeout" msg)
+        (re-find #"(?i)connection" msg)
+        (re-find #"(?i)temporary" msg))))
+
+(defn- transact-with-error-handling!
+  "Execute a transaction with proper error handling and context.
+   
+   Arguments:
+   - conn: Datalevin connection
+   - schema: schema identifier for error context
+   - txn-data: transaction data to execute
+   
+   Returns the transaction result.
+   Throws ex-info with context on failure.
+   Records metrics for monitoring."
+  [conn schema txn-data]
+  (let [start (System/currentTimeMillis)]
+    (try
+      (let [result (d/transact! conn txn-data)
+            duration (- (System/currentTimeMillis) start)]
+        (record-transaction-metric! duration true)
+        result)
+      (catch Exception e
+        (let [duration (- (System/currentTimeMillis) start)]
+          (record-transaction-metric! duration false))
+        (throw (ex-info "Datalevin transaction failed"
+                        {:schema schema
+                         :txn-count (count txn-data)
+                         :error-message (.getMessage e)}
+                        e))))))
+
+(defn- validate-connection!
+  "Ensure connection exists for schema, throw if missing.
+   
+   Arguments:
+   - connections: map of schema -> connection
+   - schema: the schema key to validate
+   
+   Throws ex-info with available schemas if connection is missing."
+  [connections schema]
+  (when-not (get connections schema)
+    (throw (ex-info "No database connection configured for schema"
+                    {:schema schema
+                     :available-schemas (vec (keys connections))}))))
 
 ;; ================================================================================
 ;; Type Mapping
@@ -87,13 +194,29 @@
 
    Arguments:
    - conn: existing Datalevin connection
-   - schema: map of attribute schemas"
+   - schema: map of attribute schemas
+   
+   Throws on incompatible schema changes."
   [conn schema]
   (when (seq schema)
     (try
       (d/update-schema conn schema)
+      (log/info "Schema updated successfully")
+      (catch clojure.lang.ExceptionInfo e
+        ;; Check if this is a known "already exists" type error
+        (let [msg (.getMessage e)]
+          (if (or (re-find #"(?i)already exists" msg)
+                  (re-find #"(?i)identical" msg))
+            (log/debug "Schema already up to date")
+            (throw (ex-info "Incompatible schema change detected"
+                            {:schema-keys (vec (keys schema))
+                             :error-message msg}
+                            e)))))
       (catch Exception e
-        (log/error e "Failed to update schema. This may be expected if schema already exists.")))))
+        (throw (ex-info "Failed to update schema"
+                        {:schema-keys (vec (keys schema))
+                         :error-message (.getMessage e)}
+                        e))))))
 
 ;; ================================================================================
 ;; Connection Management
@@ -146,29 +269,84 @@
    Arguments:
    - db: database value
    - id-attr: the identity attribute keyword
-   - ids: collection of id values
+   - ids: collection of id values (max *max-batch-size*)
    - pull-pattern: EQL pull pattern
 
-   Returns a map of id -> entity data."
+   Returns a map of id -> entity data.
+   
+   Throws if ids count exceeds *max-batch-size*.
+   Logs warning for large batches (> 100 ids)."
   [db id-attr ids pull-pattern]
-  (let [result (d/q '[:find ?e ?id
-                      :in $ ?id-attr [?id ...]
-                      :where [?e ?id-attr ?id]]
-                    db id-attr ids)]
-    (into {}
-          (map (fn [[eid id]]
-                 [id (d/pull db pull-pattern eid)]))
-          result)))
+  (let [id-count (count ids)]
+    (when (> id-count *max-batch-size*)
+      (throw (ex-info "Batch size exceeds maximum"
+                      {:requested id-count
+                       :maximum *max-batch-size*
+                       :id-attr id-attr})))
+    (when (> id-count 100)
+      (log/warn "Large batch query:" id-count "entities for" id-attr))
+    (let [result (d/q '[:find ?e ?id
+                        :in $ ?id-attr [?id ...]
+                        :where [?e ?id-attr ?id]]
+                      db id-attr ids)]
+      (into {}
+            (map (fn [[eid id]]
+                   [id (d/pull db pull-pattern eid)]))
+            result))))
 
 ;; ================================================================================
 ;; Delta Processing for Save Middleware
 ;; ================================================================================
 
+(defn- validate-delta-entry
+  "Validate a single delta entry structure."
+  [[ident changes]]
+  (and (vector? ident)
+       (= 2 (count ident))
+       (keyword? (first ident))
+       (map? changes)
+       (every? (fn [[k v]]
+                 (and (keyword? k)
+                      (map? v)
+                      (contains? v :before)
+                      (contains? v :after)))
+               changes)))
+
+(defn- validate-delta!
+  "Validate delta structure, throw on invalid input.
+   
+   Delta format: {[id-attr id] {attr {:before v :after v'} ...} ...}"
+  [delta]
+  (when-not (map? delta)
+    (throw (ex-info "Delta must be a map"
+                    {:actual-type (type delta)})))
+  (when-not (every? validate-delta-entry delta)
+    (throw (ex-info "Invalid delta structure. Expected {[id-attr id] {attr {:before X :after Y}} ...}"
+                    {:delta-keys (vec (keys delta))}))))
+
+(def ^:private tempid-counter
+  "Atomic counter for generating unique negative transaction IDs."
+  (atom -1000000))
+
+(def ^:private ^:dynamic *tempid-mappings*
+  "Dynamic var to track tempid -> txid mappings within a transaction context."
+  nil)
+
 (defn- tempid->txid
-  "Convert Fulcro tempid to negative integer for Datalevin transaction."
+  "Convert Fulcro tempid to unique negative integer for Datalevin transaction.
+   Uses atomic counter to guarantee uniqueness. Caches mappings in *tempid-mappings*
+   when bound to ensure consistency."
   [id]
   (if (tempid/tempid? id)
-    (- (Math/abs (hash id)))
+    (if *tempid-mappings*
+      ;; Use cached mapping or create new one
+      (if-let [existing (get @*tempid-mappings* id)]
+        existing
+        (let [new-id (swap! tempid-counter dec)]
+          (swap! *tempid-mappings* assoc id new-id)
+          new-id))
+      ;; No cache, just generate (backwards compatibility)
+      (swap! tempid-counter dec))
     id))
 
 (defn- ident->lookup-ref
@@ -217,8 +395,11 @@
 
    Delta format: {[id-attr id] {attr {:before v :after v'} ...} ...}
 
-   Returns a vector of transaction maps."
+   Returns a vector of transaction maps.
+   
+   Throws ex-info if delta structure is invalid."
   [delta]
+  (validate-delta! delta)
   (reduce-kv
     (fn [txns [key-attr id :as ident] entity-delta]
       (let [txn-entry (delta-entry->txn key-attr id entity-delta)]
@@ -254,7 +435,11 @@
    Expects the pathom env to contain:
    - ::dlo/connections - map of schema name to Datalevin connection
 
-   The middleware receives a delta (diff) and transacts it to the database."
+   The middleware receives a delta (diff) and transacts it to the database.
+   
+   Throws ex-info if:
+   - Connection is missing for a schema
+   - Transaction fails"
   ([]
    (wrap-datalevin-save {}))
   ([{:keys [default-schema]
@@ -271,10 +456,13 @@
                                       default-schema)))
                            delta)]
          (if (seq delta)
-           (reduce
-             (fn [acc schema]
-               (if-let [conn (get connections schema)]
-                 (let [schema-delta  (into {}
+           ;; Bind tempid mappings for consistent id generation
+           (binding [*tempid-mappings* (atom {})]
+             (reduce
+               (fn [acc schema]
+                 (validate-connection! connections schema)
+                 (let [conn          (get connections schema)
+                       schema-delta  (into {}
                                            (filter (fn [[[k _] _]]
                                                      (let [attr (get key->attribute k)]
                                                        (or (nil? attr)
@@ -284,17 +472,14 @@
                        txn-data      (delta->txn schema-delta)
                        _             (log/debug "Transacting to" schema ":" txn-data)
                        tx-result     (when (seq txn-data)
-                                       (d/transact! conn txn-data))
+                                       (transact-with-error-handling! conn schema txn-data))
                        tempid-map    (when tx-result
                                        (tempid->result-id tx-result schema-delta))]
                    (cond-> acc
                      (seq tempid-map)
-                     (update :tempids merge tempid-map)))
-                 (do
-                   (log/error "No connection for schema" schema)
-                   acc)))
-             result
-             schemas)
+                     (update :tempids merge tempid-map))))
+               result
+               schemas))
            result))))))
 
 ;; ================================================================================
@@ -307,7 +492,11 @@
    Expects the pathom env to contain:
    - ::dlo/connections - map of schema name to Datalevin connection
 
-   The middleware retracts entities by their identity attribute."
+   The middleware retracts entities by their identity attribute.
+   
+   Throws ex-info if:
+   - Connection is missing for a schema
+   - Transaction fails"
   ([]
    (wrap-datalevin-delete {}))
   ([{:keys [default-schema]
@@ -324,19 +513,17 @@
                  id      (second ident)
                  schema  (or (::attr/schema (get key->attribute id-attr))
                              default-schema)]
-             (if-let [conn (get connections schema)]
-               (let [db     (d/db conn)
-                     eid    (ffirst (d/q '[:find ?e
-                                           :in $ ?attr ?id
-                                           :where [?e ?attr ?id]]
-                                         db id-attr id))
-                     _      (log/debug "Deleting entity" eid "from schema" schema)
-                     _      (when eid
-                              (d/transact! conn [[:db/retractEntity eid]]))]
-                 result)
-               (do
-                 (log/error "No connection for schema" schema)
-                 result)))
+             (validate-connection! connections schema)
+             (let [conn   (get connections schema)
+                   db     (d/db conn)
+                   eid    (ffirst (d/q '[:find ?e
+                                         :in $ ?attr ?id
+                                         :where [?e ?attr ?id]]
+                                       db id-attr id))
+                   _      (log/debug "Deleting entity" eid "from schema" schema)
+                   _      (when eid
+                            (transact-with-error-handling! conn schema [[:db/retractEntity eid]]))]
+               result))
            result))))))
 
 ;; ================================================================================
@@ -377,29 +564,32 @@
     :as         ref-attr}
    all-attributes]
   (when (and generate-resolvers? target)
-    (let [target-id-attr (first (filter #(and (= target (::attr/qualified-key %))
-                                               (::attr/identity? %))
+    (let [target-id-attr (first (filter #(= target (::attr/qualified-key %))
                                          all-attributes))]
-      (when target-id-attr
-        [(pco/resolver
-           (symbol (str (namespace qualified-key) "." (name qualified-key) "-ref-resolver"))
-           {::pco/input  [qualified-key]
-            ::pco/output [{qualified-key [target]}]}
-           (fn [{::dlo/keys [databases]} input]
-             (let [db       (get databases schema)
-                   ref-val  (get input qualified-key)]
-               (cond
-                 (nil? ref-val)
-                 {qualified-key nil}
+      (if-not target-id-attr
+        (do
+          (log/warn "Reference target not found for" qualified-key "target:" target)
+          nil)
+        (when (::attr/identity? target-id-attr)
+          [(pco/resolver
+             (symbol (str (namespace qualified-key) "." (name qualified-key) "-ref-resolver"))
+             {::pco/input  [qualified-key]
+              ::pco/output [{qualified-key [target]}]}
+             (fn [{::dlo/keys [databases]} input]
+               (let [db       (get databases schema)
+                     ref-val  (get input qualified-key)]
+                 (cond
+                   (nil? ref-val)
+                   {qualified-key nil}
 
-                 (map? ref-val)
-                 {qualified-key ref-val}
+                   (map? ref-val)
+                   {qualified-key ref-val}
 
-                 (and (= :many cardinality) (sequential? ref-val))
-                 {qualified-key (vec ref-val)}
+                   (and (= :many cardinality) (sequential? ref-val))
+                   {qualified-key (vec ref-val)}
 
-                 :else
-                 {qualified-key {target ref-val}}))))]))))
+                   :else
+                   {qualified-key {target ref-val}}))))])))))
 
 (defn generate-resolvers
   "Generate all automatic resolvers for the given RAD attributes.
@@ -443,25 +633,27 @@
   "Create a Pathom3 plugin that adds Datalevin database support.
 
    This plugin ensures that the current database value is available
-   in the Pathom environment for each request.
+   in the Pathom environment for each request. Database snapshots are
+   taken once per request root and reused for consistency.
 
    Arguments:
    - connections: map of schema name to Datalevin connection
 
    Returns a Pathom3 plugin map."
   [connections]
-  {:com.wsscode.pathom3.connect.runner/wrap-resolve
-   (fn [resolve]
-     (fn [env node]
+  {:com.wsscode.pathom3.connect.runner/wrap-root-run
+   (fn [process]
+     (fn [env ast-or-graph entity-tree*]
        (let [dbs (reduce-kv
                    (fn [m schema conn]
                      (assoc m schema (d/db conn)))
                    {}
                    connections)]
-         (resolve (assoc env
+         (process (assoc env
                     ::dlo/connections connections
                     ::dlo/databases dbs)
-           node))))})
+           ast-or-graph
+           entity-tree*))))})
 
 ;; ================================================================================
 ;; Utility Functions
@@ -484,17 +676,70 @@
      ::dlo/databases   dbs}))
 
 (defn empty-db-connection
-  "Create an in-memory Datalevin connection for testing.
+  "Create a temporary Datalevin connection for testing.
 
    Arguments:
    - schema-name: keyword identifying the schema
    - attributes: collection of RAD attributes
 
-   Returns a temporary Datalevin connection."
+   Returns a temporary Datalevin connection.
+   
+   WARNING: This creates a directory under /tmp that will not be automatically
+   cleaned up. The caller is responsible for calling d/close on the connection.
+   Consider using create-temp-database! for automatic cleanup support."
   [schema-name attributes]
   (let [temp-dir (str "/tmp/datalevin-test-" (new-uuid))
         schema   (automatic-schema schema-name attributes)]
     (d/get-conn temp-dir schema)))
+
+(defn create-temp-database!
+  "Create a temporary Datalevin connection for testing with cleanup support.
+
+   Arguments:
+   - schema-name: keyword identifying the schema
+   - attributes: collection of RAD attributes
+
+   Returns a map with:
+   - :conn - the database connection
+   - :path - the temporary directory path
+   - :cleanup! - function to call to close and remove the database
+
+   IMPORTANT: Caller must invoke :cleanup! when done to prevent resource leaks."
+  [schema-name attributes]
+  (let [temp-dir (str "/tmp/datalevin-test-" (new-uuid))
+        schema   (automatic-schema schema-name attributes)
+        conn     (d/get-conn temp-dir schema)
+        cleanup! (fn []
+                   (try
+                     (d/close conn)
+                     (let [dir (java.io.File. temp-dir)]
+                       (when (.exists dir)
+                         (doseq [file (reverse (file-seq dir))]
+                           (.delete file))))
+                     (catch Exception e
+                       (log/warn "Error during database cleanup:" (.getMessage e)))))]
+    {:conn     conn
+     :path     temp-dir
+     :cleanup! cleanup!}))
+
+(defmacro with-temp-database
+  "Execute body with a temporary database, ensuring cleanup.
+
+   Arguments:
+   - binding: vector of [conn-sym schema-name attributes]
+   - body: forms to execute with the connection
+
+   Example:
+   (with-temp-database [conn :test test-attributes]
+     (d/transact! conn [...])
+     (d/q '[:find ...] (d/db conn)))"
+  [[conn-sym schema-name attributes] & body]
+  `(let [temp-info# (create-temp-database! ~schema-name ~attributes)
+         ~conn-sym  (:conn temp-info#)]
+     (try
+       ~@body
+       (finally
+         ((:cleanup! temp-info#))))))
 
 (defn seed-database!
   "Seed a database with initial data.

@@ -34,3 +34,16 @@
 (def transact-options
   "Map of options to pass to Datalevin transact! function"
   ::transact-options)
+
+;; Performance and safety limits
+(def transaction-timeout-ms
+  "Timeout in milliseconds for database transactions. Default: 30000"
+  ::transaction-timeout-ms)
+
+(def max-retries
+  "Maximum number of retry attempts for transient failures. Default: 3"
+  ::max-retries)
+
+(def max-batch-size
+  "Maximum number of entities to fetch in a single batch query. Default: 1000"
+  ::max-batch-size)
