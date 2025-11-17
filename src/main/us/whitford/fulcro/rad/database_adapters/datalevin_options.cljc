@@ -1,4 +1,4 @@
-(ns com.fulcrologic.rad.database-adapters.datalevin-options
+(ns us.whitford.fulcro.rad.database-adapters.datalevin-options
   "Options and configuration keys for Datalevin database adapter.")
 
 ;; Database environment keys

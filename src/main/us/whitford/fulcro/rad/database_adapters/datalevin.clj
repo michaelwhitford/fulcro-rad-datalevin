@@ -1,4 +1,4 @@
-(ns com.fulcrologic.rad.database-adapters.datalevin
+(ns us.whitford.fulcro.rad.database-adapters.datalevin
   "Datalevin database adapter for Fulcro RAD. Provides automatic schema generation,
    resolver generation, and save/delete middleware for RAD forms."
   (:require
@@ -7,7 +7,7 @@
     [com.fulcrologic.fulcro.algorithms.tempid :as tempid]
     [com.fulcrologic.rad.attributes :as attr]
     [com.fulcrologic.rad.authorization :as auth]
-    [com.fulcrologic.rad.database-adapters.datalevin-options :as dlo]
+    [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]
     [com.fulcrologic.rad.form :as form]
     [com.fulcrologic.rad.ids :refer [new-uuid]]
     [com.wsscode.pathom3.connect.operation :as pco]

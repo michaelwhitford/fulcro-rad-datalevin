@@ -1,14 +1,14 @@
-(ns com.fulcrologic.rad.database-adapters.datalevin-test
+(ns us.whitford.fulcro.rad.database-adapters.datalevin-test
   (:require
-    [clojure.test :refer [deftest testing is use-fixtures]]
-    [com.fulcrologic.fulcro.algorithms.tempid :as tempid]
-    [com.fulcrologic.rad.attributes :as attr]
-    [com.fulcrologic.rad.database-adapters.datalevin :as dl]
-    [com.fulcrologic.rad.database-adapters.datalevin-options :as dlo]
-    [com.fulcrologic.rad.form :as form]
-    [com.fulcrologic.rad.ids :refer [new-uuid]]
-    [com.wsscode.pathom3.connect.operation :as pco]
-    [datalevin.core :as d]))
+   [clojure.test :refer [deftest testing is use-fixtures]]
+   [com.fulcrologic.fulcro.algorithms.tempid :as tempid]
+   [com.fulcrologic.rad.attributes :as attr]
+   [us.whitford.fulcro.rad.database-adapters.datalevin :as dl]
+   [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]
+   [com.fulcrologic.rad.form :as form]
+   [com.fulcrologic.rad.ids :refer [new-uuid]]
+   [com.wsscode.pathom3.connect.operation :as pco]
+   [datalevin.core :as d]))
 
 ;; ================================================================================
 ;; Test Fixtures and Helpers
@@ -132,9 +132,9 @@
 (deftest start-database-test
   (testing "starts database with auto-schema"
     (let [conn (dl/start-database!
-                 {:path       @test-db-path
-                  :schema     :test
-                  :attributes test-attributes})]
+                {:path       @test-db-path
+                 :schema     :test
+                 :attributes test-attributes})]
       (reset! test-conn conn)
       (is (some? conn))
       (is (some? (d/db conn)))))
@@ -142,10 +142,10 @@
   (testing "starts database without auto-schema"
     (let [path (str @test-db-path "-no-schema")
           conn (dl/start-database!
-                 {:path         path
-                  :schema       :test
-                  :attributes   []
-                  :auto-schema? false})]
+                {:path         path
+                 :schema       :test
+                 :attributes   []
+                 :auto-schema? false})]
       (is (some? conn))
       (d/close conn)
       (let [dir (java.io.File. path)]
@@ -211,9 +211,9 @@
           tid       (tempid/tempid)
           id        (new-uuid)
           delta     {[:account/id tid] {:account/id {:before nil :after id}
-                                         :account/name {:before nil :after "Test User"}
-                                         :account/email {:before nil :after "test@example.com"}
-                                         :account/active? {:before nil :after true}}}
+                                        :account/name {:before nil :after "Test User"}
+                                        :account/email {:before nil :after "test@example.com"}
+                                        :account/active? {:before nil :after true}}}
           key->attr (into {} (map (juxt ::attr/qualified-key identity)) test-attributes)
           env       {::attr/key->attribute key->attr
                      ::dlo/connections     {:test conn}
@@ -238,8 +238,8 @@
     (let [conn      (dl/empty-db-connection :test test-attributes)
           id        (new-uuid)
           _         (d/transact! conn [{:account/id id
-                                         :account/name "Original"
-                                         :account/email "original@test.com"}])
+                                        :account/name "Original"
+                                        :account/email "original@test.com"}])
           delta     {[:account/id id] {:account/name {:before "Original" :after "Updated"}}}
           key->attr (into {} (map (juxt ::attr/qualified-key identity)) test-attributes)
           env       {::attr/key->attribute key->attr
@@ -266,8 +266,8 @@
     (let [conn      (dl/empty-db-connection :test test-attributes)
           id        (new-uuid)
           _         (d/transact! conn [{:account/id id
-                                         :account/name "ToDelete"
-                                         :account/email "delete@test.com"}])
+                                        :account/name "ToDelete"
+                                        :account/email "delete@test.com"}])
           key->attr (into {} (map (juxt ::attr/qualified-key identity)) test-attributes)
           env       {::attr/key->attribute key->attr
                      ::dlo/connections     {:test conn}
@@ -312,7 +312,7 @@
   (testing "generated resolvers have correct output"
     (let [resolvers    (dl/generate-resolvers test-attributes)
           account-res  (first (filter #(= :account/id (first (::pco/input (:config %))))
-                                       resolvers))
+                                      resolvers))
           outputs      (::pco/output (:config account-res))]
       (is (some? account-res))
       (is (contains? (set outputs) :account/name))
@@ -325,10 +325,10 @@
     (let [conn     (dl/empty-db-connection :test test-attributes)
           id       (new-uuid)
           _        (d/transact! conn [{:account/id id
-                                        :account/name "Resolver Test"
-                                        :account/email "resolver@test.com"
-                                        :account/active? true
-                                        :account/balance 100.50}])
+                                       :account/name "Resolver Test"
+                                       :account/email "resolver@test.com"
+                                       :account/active? true
+                                       :account/balance 100.50}])
           resolver (dl/id-resolver account-id [account-name account-email account-active account-balance])
           env      (dl/mock-resolver-env {:test conn})
           result   (resolver env [{:account/id id}])]
@@ -344,7 +344,7 @@
           id1    (new-uuid)
           id2    (new-uuid)
           _      (d/transact! conn [{:account/id id1 :account/name "User 1"}
-                                     {:account/id id2 :account/name "User 2"}])
+                                    {:account/id id2 :account/name "User 2"}])
           resolver (dl/id-resolver account-id [account-name])
           env    (dl/mock-resolver-env {:test conn})
           result (resolver env [{:account/id id1} {:account/id id2}])]
@@ -376,7 +376,7 @@
           result (dl/q '[:find ?name
                          :in $ ?id
                          :where [?e :account/id ?id]
-                                [?e :account/name ?name]]
+                         [?e :account/name ?name]]
                        db id)]
       (is (= #{["Query Test"]} result))
       (d/close conn)))
@@ -385,8 +385,8 @@
     (let [conn (dl/empty-db-connection :test test-attributes)
           id   (new-uuid)
           _    (d/transact! conn [{:account/id id
-                                    :account/name "Pull Test"
-                                    :account/active? true}])
+                                   :account/name "Pull Test"
+                                   :account/active? true}])
           db   (d/db conn)
           eid  (ffirst (dl/q '[:find ?e :in $ ?id :where [?e :account/id ?id]] db id))
           data (dl/pull db [:account/name :account/active?] eid)]
@@ -399,7 +399,7 @@
           id1   (new-uuid)
           id2   (new-uuid)
           _     (d/transact! conn [{:account/id id1 :account/name "First"}
-                                    {:account/id id2 :account/name "Second"}])
+                                   {:account/id id2 :account/name "Second"}])
           db    (d/db conn)
           data  (dl/get-by-ids db :account/id [id1 id2] [:account/name])]
       (is (= 2 (count data)))
