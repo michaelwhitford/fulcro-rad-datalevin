@@ -21,7 +21,7 @@ Add to your `deps.edn`:
 
 [source,clojure]
 ----
-{:deps {us.whitford/fulcro-rad-datalevin {:git/url "https://github.com/mwhitford/fulcro-rad-datalevin"
+{:deps {us.whitford/fulcro-rad-datalevin {:git/url "https://github.com/michaelwhitford/fulcro-rad-datalevin"
                                            :git/sha "LATEST_SHA"}}}
 ----
 
