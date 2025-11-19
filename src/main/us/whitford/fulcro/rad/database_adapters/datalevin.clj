@@ -470,29 +470,35 @@
          (if (seq delta)
            ;; Bind tempid mappings for consistent id generation
            (binding [*tempid-mappings* (atom {})]
-             (reduce
-               (fn [acc schema]
-                 (validate-connection! connections schema)
-                 (let [conn          (get connections schema)
-                       schema-delta  (into {}
-                                           (filter (fn [[[k _] _]]
-                                                     (let [attr (get key->attribute k)]
-                                                       (or (nil? attr)
-                                                           (= schema (::attr/schema attr))
-                                                           (nil? (::attr/schema attr))))))
-                                           delta)
-                       txn-data      (delta->txn schema-delta)
-                       _             (log/debug "Transacting to" schema ":" txn-data)
-                       tx-result     (when (seq txn-data)
-                                       (transact-with-error-handling! conn schema txn-data))
-                       tempid-map    (when tx-result
-                                       (tempid->result-id tx-result schema-delta))]
-                   (cond-> acc
-                     (seq tempid-map)
-                     (update :tempids merge tempid-map))))
-               save-result
-               schemas))
-           save-result))))))
+             (let [result (reduce
+                            (fn [acc schema]
+                              (validate-connection! connections schema)
+                              (let [conn          (get connections schema)
+                                    schema-delta  (into {}
+                                                        (filter (fn [[[k _] _]]
+                                                                  (let [attr (get key->attribute k)]
+                                                                    (or (nil? attr)
+                                                                        (= schema (::attr/schema attr))
+                                                                        (nil? (::attr/schema attr))))))
+                                                        delta)
+                                    txn-data      (delta->txn schema-delta)
+                                    _             (log/debug "Transacting to" schema ":" txn-data)
+                                    tx-result     (when (seq txn-data)
+                                                    (transact-with-error-handling! conn schema txn-data))
+                                    tempid-map    (when tx-result
+                                                    (tempid->result-id tx-result schema-delta))]
+                                (cond-> acc
+                                  (seq tempid-map)
+                                  (update :tempids merge tempid-map))))
+                            save-result
+                            schemas)]
+               ;; Ensure :tempids is always present, even if empty
+               ;; This is required for RAD's EQL queries to work correctly
+               (if (contains? result :tempids)
+                 result
+                 (assoc result :tempids {}))))
+           ;; No delta, but still ensure :tempids is present
+           (assoc save-result :tempids {})))))))
 
 ;; ================================================================================
 ;; Delete Middleware

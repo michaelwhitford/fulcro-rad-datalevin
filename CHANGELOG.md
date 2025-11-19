@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+#### Tempids Resolution (TASK-014)
+- **CRITICAL FIX**: Save middleware now always includes `:tempids` in the result map, even when saving existing entities
+- Previously, `:tempids` was only added when there were actual tempid mappings, causing Pathom3 "attribute-unreachable" errors when RAD tried to query for `:tempids` after updating existing entities
+- This resolves the error: "EQL query for :tempids cannot be resolved"
+- All save operations now return `{:tempids {}}` at minimum, allowing RAD's EQL queries to work correctly
+- Added comprehensive test suite in `datalevin_tempids_test.clj` to prevent regression
+
 ### Added
 
 #### Error Handling (TASK-001)
