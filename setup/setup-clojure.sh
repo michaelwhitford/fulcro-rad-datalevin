@@ -92,6 +92,7 @@ else
     LOGFILE=~/.clojure-setup/logs/proxy-wrapper.log
 
     export PROXY_PORT
+    export MAX_CONCURRENT_CONNECTIONS="${MAX_CONCURRENT_CONNECTIONS:-20}"
     nohup "$SCRIPT_DIR/proxy-wrapper.py" > "$LOGFILE" 2>&1 &
     PROXY_PID=$!
 

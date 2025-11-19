@@ -154,7 +154,7 @@ class ProxyHandler:
             except:
                 pass
 
-def handle_client(handler, client_sock, client_addr):
+def handle_client(handler, client_sock, client_addr, semaphore):
     """Handle a single client connection in a separate thread."""
     try:
         # Read first line to determine request type
@@ -170,17 +170,19 @@ def handle_client(handler, client_sock, client_addr):
 
         request_line = request_data.split(b"\r\n")[0].decode('utf-8', errors='ignore')
 
-        # Route based on method
-        if request_line.startswith("CONNECT"):
-            handler.handle_connect(client_sock, request_line)
-        else:
-            # Read rest of HTTP request
-            while b"\r\n\r\n" not in request_data:
-                chunk = client_sock.recv(4096)
-                if not chunk:
-                    break
-                request_data += chunk
-            handler.handle_http(client_sock, request_data)
+        # Acquire semaphore to limit concurrent connections
+        with semaphore:
+            # Route based on method
+            if request_line.startswith("CONNECT"):
+                handler.handle_connect(client_sock, request_line)
+            else:
+                # Read rest of HTTP request
+                while b"\r\n\r\n" not in request_data:
+                    chunk = client_sock.recv(4096)
+                    if not chunk:
+                        break
+                    request_data += chunk
+                handler.handle_http(client_sock, request_data)
 
     except Exception as e:
         print(f"Error in client handler: {e}", flush=True)
@@ -192,6 +194,7 @@ def handle_client(handler, client_sock, client_addr):
 
 def main():
     local_port = int(os.environ.get('PROXY_PORT', '8888'))
+    max_concurrent = int(os.environ.get('MAX_CONCURRENT_CONNECTIONS', '20'))
     upstream_proxy_url = os.environ.get('http_proxy')
 
     if not upstream_proxy_url:
@@ -200,8 +203,12 @@ def main():
 
     print(f"Starting local proxy on port {local_port}")
     print(f"Forwarding to upstream proxy: {upstream_proxy_url}")
+    print(f"Max concurrent connections: {max_concurrent}")
 
     handler = ProxyHandler(upstream_proxy_url)
+
+    # Create semaphore to limit concurrent connections
+    connection_semaphore = threading.Semaphore(max_concurrent)
 
     # Create listening socket
     server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -219,7 +226,7 @@ def main():
             # Spawn a new thread for each connection
             thread = threading.Thread(
                 target=handle_client,
-                args=(handler, client_sock, client_addr),
+                args=(handler, client_sock, client_addr, connection_semaphore),
                 daemon=True
             )
             thread.start()
