@@ -24,3 +24,6 @@ Thumbs.db
 # Local development
 .local/
 .env
+
+# Clojure installation script
+linux-install.sh
