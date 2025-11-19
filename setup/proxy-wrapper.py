@@ -56,9 +56,11 @@ class ProxyHandler:
                 return
 
             target = parts[1]
+            print(f"CONNECT request to: {target}", flush=True)
 
             # Connect to upstream proxy
             upstream_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            upstream_sock.settimeout(30)
             upstream_sock.connect((self.upstream_host, self.upstream_port))
 
             # Send CONNECT with authentication to upstream proxy
@@ -88,7 +90,9 @@ class ProxyHandler:
             upstream_sock.close()
 
         except Exception as e:
-            print(f"Error handling CONNECT: {e}")
+            print(f"Error handling CONNECT: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
             try:
                 client_sock.sendall(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
             except:
@@ -97,8 +101,13 @@ class ProxyHandler:
     def handle_http(self, client_sock, request_data):
         """Handle regular HTTP requests."""
         try:
+            # Log the request
+            first_line = request_data.decode('utf-8', errors='ignore').split('\r\n')[0]
+            print(f"HTTP request: {first_line}", flush=True)
+
             # Connect to upstream proxy
             upstream_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            upstream_sock.settimeout(30)
             upstream_sock.connect((self.upstream_host, self.upstream_port))
 
             # Inject Proxy-Authorization header if we have credentials
@@ -135,7 +144,9 @@ class ProxyHandler:
             upstream_sock.close()
 
         except Exception as e:
-            print(f"Error handling HTTP: {e}")
+            print(f"Error handling HTTP: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
             try:
                 client_sock.sendall(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
             except:
