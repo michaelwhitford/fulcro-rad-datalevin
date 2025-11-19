@@ -4,6 +4,7 @@ Local HTTP/HTTPS proxy wrapper that adds authentication headers.
 
 This proxy listens locally and forwards requests to an upstream authenticated proxy.
 It handles both HTTP requests and HTTPS CONNECT tunneling.
+Uses threading for concurrent connection handling.
 """
 
 import socket
@@ -11,6 +12,7 @@ import select
 import sys
 import os
 import base64
+import threading
 from urllib.parse import urlparse
 
 def relay_data(client_sock, upstream_sock):
@@ -152,6 +154,42 @@ class ProxyHandler:
             except:
                 pass
 
+def handle_client(handler, client_sock, client_addr):
+    """Handle a single client connection in a separate thread."""
+    try:
+        # Read first line to determine request type
+        request_data = b""
+        while b"\r\n" not in request_data:
+            chunk = client_sock.recv(4096)
+            if not chunk:
+                break
+            request_data += chunk
+
+        if not request_data:
+            return
+
+        request_line = request_data.split(b"\r\n")[0].decode('utf-8', errors='ignore')
+
+        # Route based on method
+        if request_line.startswith("CONNECT"):
+            handler.handle_connect(client_sock, request_line)
+        else:
+            # Read rest of HTTP request
+            while b"\r\n\r\n" not in request_data:
+                chunk = client_sock.recv(4096)
+                if not chunk:
+                    break
+                request_data += chunk
+            handler.handle_http(client_sock, request_data)
+
+    except Exception as e:
+        print(f"Error in client handler: {e}", flush=True)
+    finally:
+        try:
+            client_sock.close()
+        except:
+            pass
+
 def main():
     local_port = int(os.environ.get('PROXY_PORT', '8888'))
     upstream_proxy_url = os.environ.get('http_proxy')
@@ -169,7 +207,7 @@ def main():
     server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_sock.bind(('127.0.0.1', local_port))
-    server_sock.listen(5)
+    server_sock.listen(50)  # Increased backlog for concurrent connections
 
     print(f"Proxy ready - configure clients to use http://127.0.0.1:{local_port}")
     print("Press Ctrl+C to stop")
@@ -178,33 +216,13 @@ def main():
         while True:
             client_sock, client_addr = server_sock.accept()
 
-            # Read first line to determine request type
-            request_data = b""
-            while b"\r\n" not in request_data:
-                chunk = client_sock.recv(4096)
-                if not chunk:
-                    break
-                request_data += chunk
-
-            if not request_data:
-                client_sock.close()
-                continue
-
-            request_line = request_data.split(b"\r\n")[0].decode('utf-8', errors='ignore')
-
-            # Route based on method
-            if request_line.startswith("CONNECT"):
-                handler.handle_connect(client_sock, request_line)
-            else:
-                # Read rest of HTTP request
-                while b"\r\n\r\n" not in request_data:
-                    chunk = client_sock.recv(4096)
-                    if not chunk:
-                        break
-                    request_data += chunk
-                handler.handle_http(client_sock, request_data)
-
-            client_sock.close()
+            # Spawn a new thread for each connection
+            thread = threading.Thread(
+                target=handle_client,
+                args=(handler, client_sock, client_addr),
+                daemon=True
+            )
+            thread.start()
 
     except KeyboardInterrupt:
         print("\nShutting down proxy...")
