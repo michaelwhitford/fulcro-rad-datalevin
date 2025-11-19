@@ -11,6 +11,7 @@
     [com.fulcrologic.rad.ids :refer [new-uuid]]
     [com.wsscode.pathom3.connect.operation :as pco]
     [com.wsscode.pathom3.connect.indexes :as pci]
+    [com.wsscode.pathom3.plugin :as p.plugin]
     [datalevin.core :as d]
     [edn-query-language.core :as eql]
     [taoensso.encore :as enc]
@@ -364,48 +365,59 @@
    - id: the entity id
    - delta: map of attribute changes {:attr {:before X :after Y}}
 
-   Returns transaction data for this entity."
+   Returns a vector of transaction operations (maps and/or retraction vectors)."
   [key-attr id delta]
   (let [entity-id (if (tempid/tempid? id)
                     (tempid->txid id)
-                    [key-attr id])]
-    (reduce-kv
-      (fn [txn-data attr {:keys [before after]}]
-        (cond
-          ;; Setting a new value or updating
-          (and (some? after) (not= before after))
-          (let [value (if (eql/ident? after)
-                        (ident->lookup-ref after)
-                        after)]
-            (assoc txn-data attr value))
-
-          ;; Removing a value
-          (and (some? before) (nil? after))
-          (assoc txn-data attr nil)
-
-          :else
-          txn-data))
-      (if (tempid/tempid? id)
-        {:db/id entity-id key-attr id}
-        {:db/id entity-id})
-      delta)))
+                    [key-attr id])
+        base-entity (if (tempid/tempid? id)
+                      {:db/id entity-id key-attr id}
+                      {:db/id entity-id})
+        {updates false retractions true} 
+        (group-by (fn [[attr {:keys [before after]}]]
+                    (and (some? before) (nil? after)))
+                  delta)
+        
+        ;; Build update map
+        entity-map (reduce-kv
+                     (fn [txn-data attr {:keys [before after]}]
+                       (if (and (some? after) (not= before after))
+                         (let [value (if (eql/ident? after)
+                                       (ident->lookup-ref after)
+                                       after)]
+                           (assoc txn-data attr value))
+                         txn-data))
+                     base-entity
+                     (into {} updates))
+        
+        ;; Build retraction operations
+        retract-ops (mapv (fn [[attr {:keys [before]}]]
+                            [:db/retract entity-id attr before])
+                          retractions)
+        
+        ;; Combine operations
+        result (cond-> []
+                 (> (count entity-map) 1) ;; Has more than just :db/id
+                 (conj entity-map)
+                 
+                 (seq retract-ops)
+                 (into retract-ops))]
+    result))
 
 (defn delta->txn
   "Convert RAD form delta to Datalevin transaction data.
 
    Delta format: {[id-attr id] {attr {:before v :after v'} ...} ...}
 
-   Returns a vector of transaction maps.
+   Returns a vector of transaction operations (maps and retraction vectors).
    
    Throws ex-info if delta structure is invalid."
   [delta]
   (validate-delta! delta)
   (reduce-kv
     (fn [txns [key-attr id :as ident] entity-delta]
-      (let [txn-entry (delta-entry->txn key-attr id entity-delta)]
-        (if (> (count txn-entry) 1) ;; Has more than just :db/id
-          (conj txns txn-entry)
-          txns)))
+      (let [txn-ops (delta-entry->txn key-attr id entity-delta)]
+        (into txns txn-ops)))
     []
     delta))
 
@@ -444,17 +456,17 @@
    (wrap-datalevin-save {}))
   ([{:keys [default-schema]
      :or   {default-schema :main}}]
-   (fn [handler]
+   (fn [save-middleware]
      (fn [{::attr/keys [key->attribute]
            ::dlo/keys  [connections]
            :as         env}]
-       (let [result  (handler env)
-             delta   (::form/delta env)
-             schemas (into #{}
-                           (map (fn [[[k _] _]]
-                                  (or (::attr/schema (get key->attribute k))
-                                      default-schema)))
-                           delta)]
+       (let [save-result (save-middleware env)
+             delta       (::form/delta env)
+             schemas     (into #{}
+                               (map (fn [[[k _] _]]
+                                      (or (::attr/schema (get key->attribute k))
+                                          default-schema)))
+                               delta)]
          (if (seq delta)
            ;; Bind tempid mappings for consistent id generation
            (binding [*tempid-mappings* (atom {})]
@@ -478,9 +490,9 @@
                    (cond-> acc
                      (seq tempid-map)
                      (update :tempids merge tempid-map))))
-               result
+               save-result
                schemas))
-           result))))))
+           save-result))))))
 
 ;; ================================================================================
 ;; Delete Middleware
@@ -501,13 +513,13 @@
    (wrap-datalevin-delete {}))
   ([{:keys [default-schema]
      :or   {default-schema :main}}]
-   (fn [handler]
+   (fn [delete-middleware]
      (fn [{::attr/keys [key->attribute]
            ::dlo/keys  [connections]
            ::form/keys [delete-params]
            :as         env}]
-       (let [result (handler env)]
-         (if (seq delete-params)
+       (let [delete-result (delete-middleware env)]
+         (when (seq delete-params)
            (let [ident   (first delete-params)
                  id-attr (first ident)
                  id      (second ident)
@@ -520,11 +532,10 @@
                                          :in $ ?attr ?id
                                          :where [?e ?attr ?id]]
                                        db id-attr id))
-                   _      (log/debug "Deleting entity" eid "from schema" schema)
-                   _      (when eid
-                            (transact-with-error-handling! conn schema [[:db/retractEntity eid]]))]
-               result))
-           result))))))
+                   _      (log/debug "Deleting entity" eid "from schema" schema)]
+               (when eid
+                 (transact-with-error-handling! conn schema [[:db/retractEntity eid]])))))
+         delete-result)))))
 
 ;; ================================================================================
 ;; Resolver Generation
@@ -641,7 +652,8 @@
 
    Returns a Pathom3 plugin map."
   [connections]
-  {:com.wsscode.pathom3.connect.runner/wrap-root-run
+  {::p.plugin/id `datalevin-plugin
+   :com.wsscode.pathom3.connect.runner/wrap-root-run
    (fn [process]
      (fn [env ast-or-graph entity-tree*]
        (let [dbs (reduce-kv

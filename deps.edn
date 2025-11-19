@@ -10,7 +10,7 @@
            com.taoensso/encore        {:mvn/version "3.158.0"}}
 
  :aliases {:test    {:extra-paths ["src/test"]
-                     :extra-deps  {fulcrologic/fulcro-spec {:mvn/version "3.1.12"}}}
+                     :extra-deps  {fulcrologic/fulcro-spec {:mvn/version "3.1.16"}}}
 
            :run-tests {:extra-paths ["src/test"]
                        :extra-deps {lambdaisland/kaocha {:mvn/version "1.91.1392"}}
