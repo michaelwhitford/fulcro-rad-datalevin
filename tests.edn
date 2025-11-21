@@ -1,4 +1,6 @@
 #kaocha/v1 {:tests
             [{:id :unit
               :test-paths ["src/test"]}]
-            :color? false}
+            :color? false
+            :bindings {kaocha.stacktrace/*stacktrace-stop-list* []
+                       kaocha.stacktrace/*stacktrace-filters* ["kaocha." "datalevin." "clojure."]}}

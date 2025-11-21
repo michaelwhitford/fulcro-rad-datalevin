@@ -367,11 +367,21 @@
 
    Returns a vector of transaction operations (maps and/or retraction vectors)."
   [key-attr id delta]
-  (let [entity-id (if (tempid/tempid? id)
-                    (tempid->txid id)
-                    [key-attr id])
-        base-entity (if (tempid/tempid? id)
-                      {:db/id entity-id key-attr id}
+  (let [;; Check if this is a new entity creation (identity attr goes from nil to value)
+        is-new-entity? (and (not (tempid/tempid? id))
+                            (contains? delta key-attr)
+                            (nil? (get-in delta [key-attr :before])))
+        entity-id (cond
+                    (tempid/tempid? id) (tempid->txid id)
+                    is-new-entity? (swap! tempid-counter dec) ;; Generate new temp ID
+                    :else [key-attr id]) ;; Use lookup ref for existing entity
+        ;; For new entities, extract the real ID value from the delta's :after
+        ;; (not the TempId from the ident!)
+        real-id-value (if (tempid/tempid? id)
+                        (get-in delta [key-attr :after])
+                        id)
+        base-entity (if (or (tempid/tempid? id) is-new-entity?)
+                      {:db/id entity-id key-attr real-id-value}
                       {:db/id entity-id})
         {updates false retractions true} 
         (group-by (fn [[attr {:keys [before after]}]]
@@ -462,12 +472,14 @@
            :as         env}]
        (let [save-result (save-middleware env)
              delta       (::form/delta env)
+             ;; Only proceed with save if the base handler didn't return an error
+             should-save? (not (false? (::form/complete? save-result)))
              schemas     (into #{}
                                (map (fn [[[k _] _]]
                                       (or (::attr/schema (get key->attribute k))
                                           default-schema)))
                                delta)]
-         (if (seq delta)
+         (if (and (seq delta) should-save?)
            ;; Bind tempid mappings for consistent id generation
            (binding [*tempid-mappings* (atom {})]
              (let [result (reduce
@@ -497,7 +509,7 @@
                (if (contains? result :tempids)
                  result
                  (assoc result :tempids {}))))
-           ;; No delta, but still ensure :tempids is present
+           ;; No delta or should not save, but still ensure :tempids is present
            (assoc save-result :tempids {})))))))
 
 ;; ================================================================================

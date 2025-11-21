@@ -197,8 +197,8 @@
             base-handler (fn [env] {::form/id [:account/id (get-in env [::form/params :account/id])]
                                     ::form/complete? true})
             wrap-validation (fn [handler]
-                             (fn [env]
-                               (assoc (handler env) ::form/validated? true)))
+                              (fn [env]
+                                (assoc (handler env) ::form/validated? true)))
             ;; Compose middleware like RAD does
             handler (-> base-handler
                         ((dl/wrap-datalevin-save {:default-schema :test}))
@@ -385,3 +385,7 @@
         (is (= "Test Item" (:item/name (d/pull (d/db conn2) '[*] [:item/id item-id]))))
 
         (tu/cleanup-test-conn test-db2)))))
+
+(comment
+  ; no test exists using save-form* function.
+  (form/save-form*))

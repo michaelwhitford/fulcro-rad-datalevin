@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+#### Test Suite Organization
+- Consolidated test suite from multiple files into 3 well-organized files:
+  - `test_utils.clj` - Shared utilities, fixtures, and test data
+  - `datalevin_core_test.clj` - Core functionality tests (16 tests)
+  - `datalevin_save_test.clj` - Save/delete middleware tests (15 tests)
+- Removed redundant test files and duplicate test coverage
+- All tempid handling tests clearly marked as CRITICAL
+- Added comprehensive test documentation in `TEST_ORGANIZATION.md`
+- Total: 31 tests with 145+ assertions, all passing ✅
+
 ### Fixed
 
 #### Tempids Resolution (TASK-014)

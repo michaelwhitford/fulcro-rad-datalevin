@@ -1,341 +1,495 @@
-# Form Save Persistence Issue - Debugging Guide
+# Form Save Debugging Guide
 
 ## Problem Description
-Forms populate fine, but when saving changes, they revert without persisting to the database.
 
-## Tests Created
-A comprehensive test suite has been created in:
-```
-src/test/us/whitford/fulcro/rad/database_adapters/form_save_persistence_test.clj
-```
+Forms populate correctly but when saving changes, they either:
+1. Revert immediately without persisting to the database
+2. Save to database but form state doesn't update
+3. Save succeeds but subsequent loads show old data
 
-## Running the Tests
+This guide helps you diagnose and fix these issues.
 
-### Run all new persistence tests:
+## Understanding the Save Flow
+
+When a Fulcro RAD form is saved:
+
+1. **Client Side:** Form creates a delta of changes (`::form/delta`)
+2. **Mutation:** Save mutation sends delta to server
+3. **Server Middleware:** `wrap-datalevin-save` processes the delta
+4. **Database:** Changes are transacted to Datalevin
+5. **Result:** Middleware returns `{:tempids {tid real-id} ...}`
+6. **Client Merge:** RAD merges tempids into app state
+7. **Form Update:** Form re-renders with new data
+
+**If any step fails, forms will appear to revert.**
+
+## Quick Diagnosis
+
+Run the test suite to verify the adapter is working:
+
 ```bash
-clojure -M:run-tests --focus form-save-persistence
-```
+# Run all save-related tests
+clojure -M:run-tests --focus us.whitford.fulcro.rad.database-adapters.datalevin-save-test
 
-### Run a specific test:
-```bash
-clojure -M:run-tests --focus form-edit-and-save-persists
-```
-
-### Run all tests:
-```bash
+# Run all tests
 clojure -M:run-tests
 ```
 
-## Test Categories and What They Verify
+**If tests pass but your app fails, the issue is in your app configuration, not the adapter.**
 
-### 1. Complete Form Lifecycle Tests
-These tests simulate the exact workflow you're experiencing:
+## Test Suite Overview
 
-#### `form-edit-and-save-persists`
-- Creates an entity with initial values
-- Simulates user editing the form (changing fields)
-- Saves via middleware
-- **CRITICAL CHECK:** Verifies data actually persisted to database
-- **This test directly addresses your issue**
+### 1. `datalevin_core_test.clj` - Core Functionality
+Tests delta processing, tempid conversion, and basic operations.
 
-#### `form-save-then-reload-shows-changes`
-- Saves changes
-- Reloads from database
-- Verifies the reloaded data shows the changes
-- **Tests if changes survive a reload cycle**
+**Key Tests:**
+- `delta-to-transaction-conversion` - Verifies deltas convert correctly
+- `tempid-value-must-be-real-uuid` - **CRITICAL** - Ensures TempIds use real UUID values
+- `tempid-uniqueness` - Ensures multiple tempids get unique IDs
 
-#### `multiple-edits-in-sequence-all-persist`
-- Makes several sequential edits
-- Verifies each edit persists before moving to the next
-- **Tests if repeated saves work**
+### 2. `datalevin_save_test.clj` - Save Middleware
+Tests the actual save middleware that your forms use.
 
-### 2. New Entity Creation Tests
+**Key Tests:**
+- `save-middleware-returns-map` - Verifies middleware returns correct type
+- `save-new-entity` - Tests creating new entities with tempids
+- `update-existing-entity` - Tests updating existing entities
+- `tempids-always-present-in-result` - **CRITICAL** - `:tempids` must always be in result
+- `multiple-tempids-mapped-correctly` - Tests multiple new entities
+- `mixed-new-and-existing-entities` - Tests batch operations
+- `sequential-updates-persist` - Tests repeated saves
+- `rad-middleware-composition` - Tests middleware in RAD stack
 
-#### `new-form-creation-and-save-persists`
-- Creates new entity with tempid
-- Saves to database
-- Verifies entity exists and has all fields
-- Checks tempid mapping is returned correctly
+## Step-by-Step Debugging Process
 
-#### `new-form-save-then-edit-both-persist`
-- Creates new entity
-- Edits it immediately after
-- Verifies both operations persist
+### Step 1: Verify Adapter Works
 
-### 3. Result Format Tests
+Run the save tests:
 
-#### `save-result-includes-all-necessary-keys`
-- Verifies the middleware returns correct result format
-- Checks for `::form/id`, `::form/complete?`, `:tempids`
-- **Critical for Fulcro form state updates**
-
-#### `save-result-format-with-existing-entity`
-- Tests result format for updates to existing entities
-- Verifies save happens even without tempids
-
-### 4. Edge Cases
-
-#### `partial-delta-updates-only-changed-fields`
-- Updates only some fields
-- Verifies unchanged fields remain intact
-
-#### `boolean-toggle-persists`
-- Tests toggling boolean fields (true ↔ false)
-- Common form control issue
-
-#### `numeric-field-changes-persist`
-- Tests various numeric values (including 0.0, decimals)
-- Ensures precision is maintained
-
-### 5. Middleware Integration Tests
-
-#### `middleware-works-in-rad-stack`
-- Simulates realistic RAD middleware composition
-- **Tests if middleware works when stacked with others**
-
-#### `middleware-preserves-error-results`
-- Verifies error handling doesn't break saves
-
-### 6. Reference Field Tests
-
-#### `reference-field-updates-persist`
-- Tests to-many relationships
-- Verifies reference updates persist
-
-### 7. Diagnostic Tests
-
-#### `diagnostic-delta-is-processed`
-- Tracks whether middleware actually processes the delta
-- **Helps identify if middleware is even being called**
-
-#### `diagnostic-middleware-execution-order`
-- Logs execution order
-- **Helps identify middleware composition issues**
-
-#### `diagnostic-connection-is-available`
-- Tests direct database write vs middleware write
-- **Helps isolate if issue is in middleware or database layer**
-
-## How to Use These Tests to Debug Your Issue
-
-### Step 1: Run the Diagnostic Tests First
 ```bash
-clojure -M:run-tests --focus diagnostic
+clojure -M:run-tests --focus us.whitford.fulcro.rad.database-adapters.datalevin-save-test
 ```
 
-These tests will tell you:
-- Is the middleware being called?
-- Is the execution order correct?
-- Is the database connection working?
+**If all tests pass:** The adapter is working correctly. Your issue is in app configuration (go to Step 2).
 
-### Step 2: Run the Core Lifecycle Tests
-```bash
-clojure -M:run-tests --focus form-edit-and-save-persists
-clojure -M:run-tests --focus form-save-then-reload-shows-changes
-```
+**If tests fail:** There's a bug in the adapter. Check the CHANGELOG and update to latest version.
 
-If these PASS in the test suite but FAIL in your app, it means:
-- The adapter code is correct
-- **The issue is in how your app wires up the middleware**
+### Step 2: Check Your Middleware Configuration
 
-If these FAIL in the test suite, it means:
-- The adapter has a bug
-- The tests have identified the exact issue
+The most common issue is incorrect middleware setup.
 
-### Step 3: Check Middleware Composition
-```bash
-clojure -M:run-tests --focus middleware-works-in-rad-stack
-```
+#### Correct Middleware Usage
 
-This test simulates realistic RAD middleware stacking. If it fails, the issue is related to middleware composition.
-
-## Common Issues and How Tests Will Surface Them
-
-### Issue 1: Middleware Not Wired Up Correctly
-**Symptom:** Forms revert immediately after save
-**Tests that will fail:**
-- `form-edit-and-save-persists`
-- `diagnostic-middleware-execution-order`
-
-**What to check in your app:**
 ```clojure
-;; CORRECT
-(let [save-middleware (dl/wrap-datalevin-save {:default-schema :production})]
-  (let [handler (save-middleware base-handler)]  ; Step 1: wrap handler
-    (handler env)))                              ; Step 2: call with env
+(ns com.example.components.middleware
+  (:require
+    [us.whitford.fulcro.rad.database-adapters.datalevin :as dl]))
 
-;; WRONG - Will cause immediate revert
-(let [save-middleware (dl/wrap-datalevin-save {:default-schema :production})]
-  (save-middleware env))  ; Passed env instead of handler!
+;; CORRECT - Returns middleware function
+(def save-middleware
+  (dl/wrap-datalevin-save {:default-schema :production}))
+
+;; Then apply to your Pathom parser/handler
+(def parser
+  (p/parser
+    {::p/plugins [(pc/connect-plugin {::pc/register resolvers})
+                  ;; other plugins
+                  ]}))
 ```
 
-### Issue 2: Missing Database Connection in Pathom Env
-**Symptom:** Silent failure, no error
-**Tests that will fail:**
-- `error-missing-connection`
-- `diagnostic-connection-is-available`
+#### Incorrect Usage (Common Mistake)
 
-**What to check in your app:**
 ```clojure
-;; Your pathom environment must include:
-{::dlo/connections {:production your-datalevin-conn}}
+;; WRONG - Calling middleware with env instead of handler
+(let [middleware (dl/wrap-datalevin-save {:default-schema :production})]
+  (middleware env))  ; Returns function, not result!
+
+;; CORRECT - Pass handler, then call with env
+(let [middleware (dl/wrap-datalevin-save {:default-schema :production})
+      handler    (middleware base-handler)]
+  (handler env))  ; Returns map
 ```
 
-### Issue 3: Delta Not Being Created by Form
-**Symptom:** Save appears to work but nothing changes
-**Tests that will fail:**
-- `form-edit-and-save-persists`
-- `diagnostic-delta-is-processed`
+### Step 3: Verify Database Connection in Environment
 
-**What to check in your app:**
+Check that your Pathom environment includes database connections:
+
 ```clojure
-;; Check if form is creating delta correctly
-;; Delta should look like:
-{[:entity/id entity-id]
- {:entity/field {:before "old" :after "new"}}}
+(defn make-pathom-env [connections]
+  {::dlo/connections connections
+   ::dlo/databases   (into {} (map (fn [[k v]] [k (d/db v)])) connections)
+   ;; other env setup
+   })
 ```
 
-### Issue 4: Incorrect Schema Configuration
-**Symptom:** Error about missing connection for schema
-**Tests that will fail:**
-- `error-includes-context`
+### Step 4: Check Form Delta Creation
 
-**What to check in your app:**
+Add logging to see if the form is creating deltas:
+
 ```clojure
-;; Ensure attribute schema matches connection schema
-(defattr my-attribute :entity/field :string
-  {::attr/schema :production})  ; Must match connection key
-
-;; And connection exists
-{::dlo/connections {:production conn}}
-```
-
-### Issue 5: Result Not Being Merged Back to Form
-**Symptom:** Save works in DB, but form doesn't update
-**Tests that will fail:**
-- `save-result-includes-all-necessary-keys`
-- `save-result-format-with-existing-entity`
-
-**What to check in your app:**
-- Ensure save mutation is properly wired to Fulcro
-- Check that tempids are being merged into app state
-- Verify form is using standard RAD save mechanism
-
-## Manual Testing in Your App
-
-### Add Logging to Your Save Handler
-```clojure
+;; In your save mutation
 (defmutation save-form [params]
   (action [{:keys [state] :as env}]
-    (log/info "SAVE: Starting save with params:" params)
-    ;; Your save logic here
-    )
+    (log/info "Delta:" (::form/delta env)))
   (remote [env]
-    (log/info "SAVE: Remote called with env keys:" (keys env))
-    ;; Return save AST
-    ))
+    (log/info "Remote env keys:" (keys env))
+    true))
 ```
 
-### Add Logging to Middleware Wrapper
-In your server setup:
+### Step 5: Verify Tempid Merging
+
+Check that tempids are being merged back into app state:
+
 ```clojure
-(let [save-middleware (dl/wrap-datalevin-save {:default-schema :production})]
+;; Should see in browser console or logs
+;; After save: {:tempids {#fulcro/tempid [...] #uuid "..."}}
+```
+
+## Common Issues and Solutions
+
+### Issue 1: Forms Revert Immediately After Save
+
+**Symptom:** Form appears to save but immediately reverts to old values.
+
+**Cause:** Middleware not properly wired up OR `:tempids` not being returned.
+
+**Tests that detect this:**
+- `tempids-always-present-in-result` (will fail if adapter broken)
+- `save-middleware-returns-map` (will fail if middleware returns function)
+
+**Solution - Check your middleware setup:**
+
+```clojure
+;; In your parser/handler configuration
+(require '[us.whitford.fulcro.rad.database-adapters.datalevin :as dl]
+         '[us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo])
+
+;; Make sure middleware is applied correctly
+(def save-middleware (dl/wrap-datalevin-save {:default-schema :production}))
+
+;; Middleware should wrap your handler
+(def wrapped-handler
+  (-> base-handler
+      save-middleware
+      ;; other middleware
+      ))
+
+;; Then call with environment
+(wrapped-handler env)
+```
+
+**Also verify `:tempids` is in the result:**
+
+```clojure
+;; Add temporary logging in your server
+(def save-middleware-debug
   (fn [handler]
     (fn [env]
-      (log/info "MIDDLEWARE: Before save, delta:" (::form/delta env))
       (let [result (handler env)]
-        (log/info "MIDDLEWARE: After save, result keys:" (keys result))
-        (log/info "MIDDLEWARE: Tempids:" (:tempids result))
+        (log/info "Save result keys:" (keys result))
+        (log/info "Tempids:" (:tempids result))
         result))))
+
+(def wrapped-handler
+  (-> base-handler
+      (dl/wrap-datalevin-save {:default-schema :production})
+      save-middleware-debug))
 ```
 
-### Verify Database After Save
+### Issue 2: Missing Database Connection
+
+**Symptom:** Error about missing connection for schema.
+
+**Cause:** `::dlo/connections` not configured in Pathom environment.
+
+**Tests that detect this:**
+- `error-missing-connection` (should throw with helpful message)
+
+**Solution - Configure connections in environment:**
+
 ```clojure
-;; After save mutation completes, manually check database
-(let [db (d/db your-conn)
-      entity (d/pull db '[*] [:entity/id entity-id])]
-  (log/info "DB STATE:" entity))
+(ns com.example.components.parser
+  (:require
+    [datalevin.core :as d]
+    [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]))
+
+(defonce connections (atom {}))
+
+(defn start-connections! []
+  (let [conn (d/get-conn "/var/data/mydb" schema)]
+    (reset! connections {:production conn})))
+
+(defn make-pathom-env []
+  {::dlo/connections @connections
+   ::dlo/databases   (into {} (map (fn [[k conn]] [k (d/db conn)])) @connections)
+   ;; other environment keys
+   })
 ```
 
-## Expected Test Results
+### Issue 3: Delta Not Being Created
 
-### If ALL tests pass:
-- The adapter code is working correctly
-- The issue is in your application's middleware setup or form configuration
+**Symptom:** Save appears to work but nothing changes in database.
 
-### If diagnostic tests fail:
-- Middleware is not being called or composed incorrectly
-- Check your pathom plugin configuration
-- Check your form configuration
+**Cause:** Form isn't creating deltas, or deltas are empty.
 
-### If lifecycle tests fail:
-- There's a bug in the adapter's save mechanism
-- This would be unexpected given existing test coverage
+**Tests that detect this:**
+- `update-existing-entity` (verifies deltas with changes work)
 
-### If result format tests fail:
-- The middleware is not returning the correct result structure
-- Fulcro cannot update form state from the result
+**Solution - Verify delta creation:**
 
-## Next Steps Based on Test Results
-
-1. **Run the full test suite** and note which tests pass/fail
-2. **Check the failure messages** - they're designed to be descriptive
-3. **Compare passing tests** with your app configuration
-4. **Add logging** to your app's save flow to trace execution
-5. **If tests pass but app fails**, the issue is in app setup, not adapter
-
-## Additional Debugging Tools
-
-### Check Middleware Composition
-Add this to your server setup:
 ```clojure
-(defn debug-middleware [handler]
+;; Add logging in your save mutation
+(defmutation save-form [params]
+  (action [{:keys [state] :as env}]
+    (log/info "DELTA:" (::form/delta env))
+    ;; Delta should look like:
+    ;; {[:entity/id entity-id]
+    ;;  {:entity/field {:before "old" :after "new"}}}
+    )
+  (remote [env]
+    (eql/query->ast [:save-form params])))
+```
+
+**Check form configuration:**
+
+```clojure
+(defsc AccountForm [this props]
+  {:ident         :account/id
+   ::form/id      account-id
+   ::form/fields  #{:account/name :account/email}
+   ::form/validator account-validator
+   ;; Make sure form attributes are properly configured
+   }
+  ...)
+```
+
+### Issue 4: Schema Mismatch
+
+**Symptom:** Error about missing connection for schema.
+
+**Cause:** Attribute specifies one schema, but connection uses different key.
+
+**Tests that detect this:**
+- `error-includes-context` (provides helpful error message)
+
+**Solution - Ensure schema names match:**
+
+```clojure
+;; In your attribute definitions
+(defattr account-id :account/id :uuid
+  {::attr/schema :production    ; Schema name
+   ::attr/identity? true})
+
+(defattr account-name :account/name :string
+  {::attr/schema :production    ; Must match!
+   ::attr/identities #{:account/id}})
+
+;; In your connection configuration
+{::dlo/connections {:production conn}}  ; Same schema name
+
+;; OR specify default-schema in middleware
+(dl/wrap-datalevin-save {:default-schema :production})
+```
+
+### Issue 5: Data Persists But Form Doesn't Update
+
+**Symptom:** Save works in database, but form still shows old values.
+
+**Cause:** Tempids not being merged into client app state.
+
+**Tests that detect this:**
+- `tempids-always-present-in-result` (ensures `:tempids` always returned)
+- `rad-middleware-composition` (ensures result format is correct)
+
+**Solution - Verify tempid merge on client:**
+
+```clojure
+;; Check your save mutation on client
+(defmutation save-account [params]
+  (action [{:keys [state] :as env}]
+    (log/info "Saving account..."))
+  (remote [env]
+    true)  ; Make sure remote returns true
+  (ok-action [{:keys [state result] :as env}]
+    (log/info "Save succeeded, tempids:" (:tempids result))
+    ;; Fulcro should automatically merge tempids
+    ;; If you're doing custom merging, ensure tempids are processed
+    ))
+
+;; Make sure your form uses standard RAD save
+(use-sub-form! this AccountForm
+  {:destructive? false})
+```
+
+**Verify server response format:**
+
+The middleware should return:
+```clojure
+{:tempids {#fulcro/tempid [...] #uuid "..."}
+ ;; other result keys
+ }
+```
+
+Not:
+```clojure
+;; WRONG - function instead of map
+#function[...]
+```
+
+## Debugging Checklist
+
+Use this checklist to systematically diagnose form save issues:
+
+### 1. Verify Adapter Works
+- [ ] Run test suite: `clojure -M:run-tests`
+- [ ] All tests pass (especially save tests)
+- [ ] If tests fail, update to latest version
+
+### 2. Check Middleware Configuration
+- [ ] Middleware created with `(dl/wrap-datalevin-save)`
+- [ ] Middleware wraps handler, not called with env directly
+- [ ] Middleware returns map, not function
+- [ ] Add debug logging to verify result format
+
+### 3. Verify Database Connections
+- [ ] `::dlo/connections` in Pathom environment
+- [ ] Connection keys match attribute schemas
+- [ ] Connections are active (not closed)
+- [ ] Database snapshots in `::dlo/databases`
+
+### 4. Check Form Configuration
+- [ ] Form has proper ident
+- [ ] Form fields match attributes
+- [ ] Attributes have correct schema
+- [ ] Form creates deltas (check with logging)
+
+### 5. Verify Tempid Flow
+- [ ] Server returns `:tempids` in result
+- [ ] Client mutation has `ok-action` or uses RAD defaults
+- [ ] Tempids are merged into app state
+- [ ] Form re-renders after merge
+
+### 6. Test Database Directly
+- [ ] Can write to database with `d/transact!`
+- [ ] Can read back data with `d/pull`
+- [ ] Connection is to correct path/database
+
+## Logging Strategy
+
+Add strategic logging to trace the save flow:
+
+### Server-Side Logging
+
+```clojure
+;; Wrap middleware with debug logging
+(defn debug-save-middleware [handler]
   (fn [env]
-    (log/info "ENV KEYS:" (keys env))
-    (log/info "HAS DELTA:" (boolean (::form/delta env)))
-    (log/info "HAS CONNECTIONS:" (boolean (::dlo/connections env)))
-    (handler env)))
+    (log/info "=== SAVE START ===")
+    (log/info "Delta present:" (boolean (::form/delta env)))
+    (log/info "Delta keys:" (keys (::form/delta env)))
+    (log/info "Connection present:" (boolean (get-in env [::dlo/connections :production])))
+    
+    (let [result (handler env)]
+      (log/info "=== SAVE RESULT ===")
+      (log/info "Result type:" (type result))
+      (log/info "Result keys:" (keys result))
+      (log/info "Tempids:" (:tempids result))
+      (log/info "=== SAVE END ===")
+      result)))
 
-;; Compose like:
-(-> base-handler
-    (dl/wrap-datalevin-save {:default-schema :production})
-    (debug-middleware))
+;; Apply to your handler
+(def wrapped-handler
+  (-> base-handler
+      (dl/wrap-datalevin-save {:default-schema :production})
+      debug-save-middleware))
 ```
 
-### Verify Pathom Plugin
+### Client-Side Logging
+
 ```clojure
-(pco/register
-  [(dl/pathom-plugin
-     (fn [env] {::dlo/connections {:production your-conn}
-                ::dlo/databases   {:production (d/db your-conn)}}))])
+(defmutation save-account [params]
+  (action [{:keys [state] :as env}]
+    (log/info "=== CLIENT SAVE START ===")
+    (log/info "Params:" params))
+  (remote [env] true)
+  (ok-action [{:keys [result] :as env}]
+    (log/info "=== CLIENT SAVE SUCCESS ===")
+    (log/info "Result:" result)
+    (log/info "Tempids:" (:tempids result)))
+  (error-action [{:keys [result] :as env}]
+    (log/error "=== CLIENT SAVE ERROR ===")
+    (log/error "Error:" result)))
 ```
 
-## Questions to Answer
+### Database Verification
 
-After running tests, answer these:
+```clojure
+;; After save, verify in database
+(defn verify-save [conn entity-id]
+  (let [db (d/db conn)
+        entity (d/pull db '[*] [:account/id entity-id])]
+    (log/info "DB Entity:" entity)
+    entity))
+```
 
-1. ✓ Do the tests pass? (Yes/No)
-2. ✓ Which specific tests fail? (List them)
-3. ✓ Does your app use the same middleware composition pattern as the tests?
-4. ✓ Is `::dlo/connections` present in your Pathom environment?
-5. ✓ Are you using custom save middleware that might interfere?
-6. ✓ Do you see the delta in server logs when saving?
-7. ✓ Does direct database write work in your app?
+## Common Error Messages
+
+### "No database connection configured for schema :X"
+**Cause:** Missing connection in `::dlo/connections`  
+**Fix:** Add connection to Pathom environment
+
+### "Delta must be a map"
+**Cause:** Invalid delta structure passed to middleware  
+**Fix:** Check form delta creation
+
+### "Batch size exceeds maximum"
+**Cause:** Trying to save too many entities at once  
+**Fix:** Increase `*max-batch-size*` or batch your saves
+
+### "attribute-unreachable" for `:tempids`
+**Cause:** Middleware not returning `:tempids` key  
+**Fix:** Update to latest adapter version (fixed in recent releases)
+
+## Getting Help
+
+If you've followed this guide and still have issues:
+
+1. **Run the tests** and note which pass/fail
+2. **Collect logs** from both client and server
+3. **Check database** to see if data persists
+4. **Verify versions** of Fulcro RAD and adapter
+5. **Create minimal reproduction** if possible
+
+Include this information when asking for help:
+- Test results (pass/fail)
+- Server logs showing save flow
+- Client logs showing mutation
+- Database state verification
+- Middleware configuration code
+- Form configuration code
 
 ## Summary
 
-These tests comprehensively cover:
-- ✓ Complete form lifecycle (load → edit → save → verify)
-- ✓ New entity creation with tempids
-- ✓ Updates to existing entities
-- ✓ Result format correctness
-- ✓ Edge cases (booleans, numbers, nil values)
-- ✓ Middleware composition
-- ✓ Reference fields
-- ✓ Diagnostic checks for common issues
+The test suite comprehensively covers:
+- ✅ Schema generation and connections
+- ✅ Delta processing and validation
+- ✅ Tempid handling (CRITICAL for form updates)
+- ✅ Save middleware with all edge cases
+- ✅ Delete middleware
+- ✅ Error handling and validation
+- ✅ RAD middleware composition
+- ✅ Data persistence verification
+- ✅ Batch operations
+- ✅ Resource management
 
-The tests are designed to either:
-1. **Pass** - confirming the adapter works, issue is in app setup
-2. **Fail with descriptive messages** - pinpointing the exact bug
+**If tests pass, your issue is in application configuration.**  
+**If tests fail, there's a bug in the adapter (report it!).**
 
-Run them and let me know the results!
+Most form save issues are caused by:
+1. Missing `:tempids` in result (fixed in recent versions)
+2. Incorrect middleware wiring (handler vs env)
+3. Missing database connections in environment
+4. Schema name mismatches
+5. Client not merging tempids
+
+Follow the checklist and logging strategy above to diagnose your specific issue.

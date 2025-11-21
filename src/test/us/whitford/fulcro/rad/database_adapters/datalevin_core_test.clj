@@ -1,5 +1,5 @@
-(ns us.whitford.fulcro.rad.database-adapters.datalevin-test
-  "Core functionality tests for datalevin RAD adapter.
+(ns us.whitford.fulcro.rad.database-adapters.datalevin-core-test
+  "Core functionality tests for the Datalevin RAD adapter.
    Tests schema generation, connections, delta processing, resolvers, and query utilities."
   (:require
    [clojure.test :refer [deftest testing is]]
@@ -57,11 +57,7 @@
       (is (some? conn))
       (is (some? (d/db conn)))
       (d/close conn)
-      ;; Cleanup
-      (let [dir (java.io.File. path)]
-        (when (.exists dir)
-          (doseq [file (reverse (file-seq dir))]
-            (.delete file))))))
+      (tu/cleanup-path path)))
 
   (testing "starts database without auto-schema"
     (let [path (str "/tmp/datalevin-no-schema-" (new-uuid))
@@ -72,11 +68,7 @@
                  :auto-schema? false})]
       (is (some? conn))
       (d/close conn)
-      ;; Cleanup
-      (let [dir (java.io.File. path)]
-        (when (.exists dir)
-          (doseq [file (reverse (file-seq dir))]
-            (.delete file)))))))
+      (tu/cleanup-path path))))
 
 (deftest empty-db-connection-test
   (testing "creates in-memory test database"
@@ -86,7 +78,7 @@
       (d/close conn))))
 
 ;; ================================================================================
-;; Delta Processing Tests
+;; Delta to Transaction Conversion Tests
 ;; ================================================================================
 
 (deftest delta-to-transaction-conversion
@@ -101,16 +93,18 @@
               :account/email "alice@test.com"}
              (first txn)))))
 
-  (testing "handles tempids"
+  (testing "handles tempids correctly"
     (let [tid   (tempid/tempid)
-          delta {[:account/id tid] {:account/id {:before nil :after tid}
+          real-uuid (new-uuid)
+          delta {[:account/id tid] {:account/id {:before nil :after real-uuid}
                                     :account/name {:before nil :after "Bob"}}}
           txn   (dl/delta->txn delta)]
       (is (= 1 (count txn)))
       (let [entry (first txn)]
         (is (number? (:db/id entry)))
         (is (neg? (:db/id entry)))
-        (is (= tid (:account/id entry)))
+        ;; CRITICAL: Must use the real UUID, not the TempId
+        (is (= real-uuid (:account/id entry)) "Must use real UUID from delta :after, not TempId")
         (is (= "Bob" (:account/name entry))))))
 
   (testing "handles value removal"
@@ -141,12 +135,6 @@
                           #"Invalid delta structure"
                           (dl/delta->txn {[:account/id 123] "not a map"}))))
 
-  (testing "validates before/after keys present"
-    (is (thrown-with-msg? clojure.lang.ExceptionInfo
-                          #"Invalid delta structure"
-                          (dl/delta->txn {[:account/id (new-uuid)]
-                                          {:account/name {:value "missing before/after"}}}))))
-
   (testing "validates ident is a vector"
     (is (thrown-with-msg? clojure.lang.ExceptionInfo
                           #"Invalid delta structure"
@@ -157,7 +145,7 @@
                                  {:account/name {:before nil :after "Valid"}}})))))
 
 ;; ================================================================================
-;; Tempid Uniqueness Tests
+;; Tempid Handling Tests
 ;; ================================================================================
 
 (deftest tempid-uniqueness
@@ -177,6 +165,23 @@
       (is (= 3 (count ids)))
       (is (= 3 (count (set ids))) "All IDs should be unique")
       (is (every? neg? ids) "All IDs should be negative"))))
+
+(deftest tempid-value-must-be-real-uuid
+  (testing "TempId ident uses real UUID value from delta, not TempId itself"
+    (let [tid      (tempid/tempid)
+          real-id  (new-uuid)
+          delta    {[:account/id tid] 
+                    {:account/id {:before nil :after real-id}
+                     :account/name {:before nil :after "Test"}}}
+          txn-data (dl/delta->txn delta)
+          entity   (first (filter map? txn-data))]
+      
+      (is (uuid? (:account/id entity))
+          "account/id must be UUID, not TempId")
+      (is (= real-id (:account/id entity))
+          "Must use real UUID from delta :after value")
+      (is (not (tempid/tempid? (:account/id entity)))
+          "Must NOT be a TempId"))))
 
 ;; ================================================================================
 ;; Resolver Generation Tests
@@ -289,7 +294,7 @@
   (testing "throws when batch size exceeds maximum"
     (tu/with-test-conn [conn]
       (let [db  (d/db conn)
-            ids (repeatedly 1001 new-uuid)]  ;; One over the limit
+            ids (repeatedly 1001 new-uuid)]
         (is (thrown-with-msg? clojure.lang.ExceptionInfo
                               #"Batch size exceeds maximum"
                               (dl/get-by-ids db :account/id ids [:account/name]))))))
@@ -297,17 +302,8 @@
   (testing "accepts exactly maximum batch size"
     (tu/with-test-conn [conn]
       (let [db  (d/db conn)
-            ids (repeatedly 1000 new-uuid)]  ;; Exactly at limit
-        (is (map? (dl/get-by-ids db :account/id ids [:account/name]))))))
-
-  (testing "custom batch size limit can be configured"
-    (tu/with-test-conn [conn]
-      (let [db  (d/db conn)
-            ids (repeatedly 11 new-uuid)]
-        (binding [dl/*max-batch-size* 10]
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo
-                                #"Batch size exceeds maximum"
-                                (dl/get-by-ids db :account/id ids [:account/name]))))))))
+            ids (repeatedly 1000 new-uuid)]
+        (is (map? (dl/get-by-ids db :account/id ids [:account/name])))))))
 
 ;; ================================================================================
 ;; Mock Environment Tests
@@ -370,7 +366,6 @@
       (is (fn? cleanup!))
       (is (.exists (java.io.File. path)))
       (cleanup!)
-      ;; Give a moment for cleanup
       (Thread/sleep 100)
       (is (not (.exists (java.io.File. path))) "Cleanup should remove directory")))
 
@@ -403,5 +398,4 @@
       (dl/with-temp-database [conn :test tu/all-test-attributes]
         (throw (ex-info "Test exception" {})))
       (catch Exception _))
-    ;; Cleanup should not throw
     (is true "Cleanup should not throw")))

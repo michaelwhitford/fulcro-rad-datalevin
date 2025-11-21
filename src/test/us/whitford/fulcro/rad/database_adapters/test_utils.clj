@@ -75,8 +75,10 @@
   ([]
    (create-test-conn all-test-attributes))
   ([attributes]
-   (let [path (str "/tmp/datalevin-test-" (new-uuid))
-         schema (dl/automatic-schema :test attributes)]
+   ;; Infer schema name from the first attribute's schema, default to :test
+   (let [schema-name (or (::attr/schema (first attributes)) :test)
+         path (str "/tmp/datalevin-test-" (new-uuid))
+         schema (dl/automatic-schema schema-name attributes)]
      {:conn (d/get-conn path schema)
       :path path})))
 
@@ -116,3 +118,12 @@
   "Create a key->attribute map from a collection of attributes."
   [attributes]
   (into {} (map (juxt ::attr/qualified-key identity)) attributes))
+
+(defn cleanup-path
+  "Cleanup a directory path by recursively deleting all files."
+  [path]
+  (when path
+    (let [dir (java.io.File. path)]
+      (when (.exists dir)
+        (doseq [file (reverse (file-seq dir))]
+          (.delete file))))))
