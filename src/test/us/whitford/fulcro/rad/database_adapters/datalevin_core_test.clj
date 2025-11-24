@@ -350,18 +350,6 @@
         (is (empty? count))))))
 
 ;; ================================================================================
-;; Metrics Tests
-;; ================================================================================
-
-(deftest metrics-tracking
-  (testing "reset-metrics! clears all counters"
-    (dl/reset-metrics!)
-    (let [metrics (dl/get-metrics)]
-      (is (= 0 (:transaction-count metrics)))
-      (is (= 0 (:transaction-errors metrics)))
-      (is (= 0 (:total-transaction-time-ms metrics))))))
-
-;; ================================================================================
 ;; Resource Management Tests
 ;; ================================================================================
 

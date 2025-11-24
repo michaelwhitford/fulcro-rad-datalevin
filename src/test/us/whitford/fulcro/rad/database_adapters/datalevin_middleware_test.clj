@@ -153,7 +153,7 @@
                                           :account/name "ToDelete"}])
             env       {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
                        ::dlo/connections     {:test conn}
-                       ::form/delete-params  [[:account/id real-id]]}
+                       ::form/params         {:account/id real-id}}
             middleware (dl/wrap-datalevin-delete {:default-schema :test})
             result     ((middleware (fn [_] {:deleted true})) env)]
 
@@ -168,7 +168,7 @@
     (tu/with-test-conn [conn]
       (let [env       {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
                        ::dlo/connections     {:test conn}
-                       ::form/delete-params  [[:account/id (new-uuid)]]}
+                       ::form/params         {:account/id (new-uuid)}}
             middleware (dl/wrap-datalevin-delete {:default-schema :test})
             result     ((middleware (fn [_] {:result :ok})) env)]
 
@@ -306,7 +306,7 @@
   (testing "delete throws when connection missing"
     (let [env       {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
                      ::dlo/connections     {}
-                     ::form/delete-params  [[:account/id (new-uuid)]]}
+                     ::form/params         {:account/id (new-uuid)}}
           middleware (dl/wrap-datalevin-delete {:default-schema :test})]
 
       (is (thrown-with-msg? clojure.lang.ExceptionInfo

@@ -35,45 +35,6 @@
   3)
 
 ;; ================================================================================
-;; Metrics and Observability
-;; ================================================================================
-
-(def metrics
-  "Atom containing metrics about database operations."
-  (atom {:transaction-count 0
-         :transaction-errors 0
-         :query-count 0
-         :total-transaction-time-ms 0}))
-
-(defn- record-transaction-metric!
-  "Record metrics for a transaction."
-  [duration-ms success?]
-  (swap! metrics (fn [m]
-                   (cond-> m
-                     true (update :transaction-count inc)
-                     true (update :total-transaction-time-ms + duration-ms)
-                     (not success?) (update :transaction-errors inc)))))
-
-(defn get-metrics
-  "Get current database metrics.
-
-   Returns a map with:
-   - :transaction-count - total number of transactions
-   - :transaction-errors - number of failed transactions
-   - :query-count - number of queries executed
-   - :total-transaction-time-ms - cumulative transaction time"
-  []
-  @metrics)
-
-(defn reset-metrics!
-  "Reset all metrics to zero. Useful for testing."
-  []
-  (reset! metrics {:transaction-count 0
-                   :transaction-errors 0
-                   :query-count 0
-                   :total-transaction-time-ms 0}))
-
-;; ================================================================================
 ;; Error Handling
 ;; ================================================================================
 
@@ -94,23 +55,16 @@
    - txn-data: transaction data to execute
 
    Returns the transaction result.
-   Throws ex-info with context on failure.
-   Records metrics for monitoring."
+   Throws ex-info with context on failure."
   [conn schema txn-data]
-  (let [start (System/currentTimeMillis)]
-    (try
-      (let [result (d/transact! conn txn-data)
-            duration (- (System/currentTimeMillis) start)]
-        (record-transaction-metric! duration true)
-        result)
-      (catch Exception e
-        (let [duration (- (System/currentTimeMillis) start)]
-          (record-transaction-metric! duration false))
-        (throw (ex-info "Datalevin transaction failed"
-                        {:schema schema
-                         :txn-count (count txn-data)
-                         :error-message (.getMessage e)}
-                        e))))))
+  (try
+    (d/transact! conn txn-data)
+    (catch Exception e
+      (throw (ex-info "Datalevin transaction failed"
+                      {:schema schema
+                       :txn-count (count txn-data)
+                       :error-message (.getMessage e)}
+                      e)))))
 
 (defn- validate-connection!
   "Ensure connection exists for schema, throw if missing.
@@ -570,13 +524,21 @@
                                  (update :tempids merge tempid-map))))
                            save-result
                            schemas)]
-               ;; Ensure :tempids is always present, even if empty
+               ;; Ensure :tempids and ::form/errors are always present
                ;; This is required for RAD's EQL queries to work correctly
-               (if (contains? result :tempids)
-                 result
-                 (assoc result :tempids {}))))
-           ;; No delta or should not save, but still ensure :tempids is present
-           (assoc save-result :tempids {})))))))
+               (cond-> result
+                 (not (contains? result :tempids))
+                 (assoc :tempids {})
+                 
+                 (not (contains? result ::form/errors))
+                 (assoc ::form/errors []))))
+           ;; No delta or should not save, but still ensure required keys are present
+           (cond-> save-result
+             (not (contains? save-result :tempids))
+             (assoc :tempids {})
+             
+             (not (contains? save-result ::form/errors))
+             (assoc ::form/errors []))))))))
 
 ;; ================================================================================
 ;; Delete Middleware
@@ -600,15 +562,16 @@
    (fn [delete-middleware]
      (fn [{::attr/keys [key->attribute]
            ::dlo/keys  [connections]
-           ::form/keys [delete-params]
+           ::form/keys [params]
            :as         env}]
        (let [delete-result (delete-middleware env)]
-         (when (seq delete-params)
-           (let [ident   (first delete-params)
-                 id-attr (first ident)
-                 id      (second ident)
+         (tap> {:from ::wrap-datalevin-delete :default-schema default-schema :env env :delete-result delete-result})
+         (if (seq params)
+           (let [id-attr (first (keys params))
+                 id      (params id-attr)
                  schema  (or (::attr/schema (get key->attribute id-attr))
                              default-schema)]
+             (tap> {:from ::wrap-datalevin-delete :params params :schema schema})
              (validate-connection! connections schema)
              (let [conn   (get connections schema)
                    db     (d/db conn)
@@ -617,9 +580,30 @@
                                          :where [?e ?attr ?id]]
                                        db id-attr id))
                    _      (log/debug "Deleting entity" eid "from schema" schema)]
-               (when eid
-                 (transact-with-error-handling! conn schema [[:db/retractEntity eid]])))))
-         delete-result)))))
+               (tap> {:from ::wrap-datalevin-delete :eid eid})
+               (if eid
+                 (do
+                   (transact-with-error-handling! conn schema [[:db/retractEntity eid]])
+                   (cond-> delete-result
+                     (not (contains? delete-result :tempids))
+                     (assoc :tempids {})
+                     
+                     (not (contains? delete-result ::form/errors))
+                     (assoc ::form/errors [])))
+                 ;; Entity not found, still return required keys
+                 (cond-> delete-result
+                   (not (contains? delete-result :tempids))
+                   (assoc :tempids {})
+                   
+                   (not (contains? delete-result ::form/errors))
+                   (assoc ::form/errors [])))))
+           ;; No params, still ensure required keys are present
+           (cond-> delete-result
+             (not (contains? delete-result :tempids))
+             (assoc :tempids {})
+             
+             (not (contains? delete-result ::form/errors))
+             (assoc ::form/errors []))))))))
 
 ;; ================================================================================
 ;; Resolver Generation

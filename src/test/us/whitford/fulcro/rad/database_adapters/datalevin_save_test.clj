@@ -247,6 +247,96 @@
         (is (= "Version 3" (:account/name (d/pull (d/db conn) '[*] [:account/id entity-id]))))))))
 
 ;; ================================================================================
+;; RAD Form Requirements Tests
+;; ================================================================================
+
+(deftest save-middleware-returns-form-errors
+  (testing "save middleware always returns ::form/errors vector"
+    (tu/with-test-conn [conn]
+      (let [tid       (tempid/tempid)
+            real-id   (new-uuid)
+            delta     {[:account/id tid] {:account/id {:before nil :after real-id}
+                                          :account/name {:before nil :after "Test User"}}}
+            env       {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
+                       ::dlo/connections     {:test conn}
+                       ::form/params         {::form/delta delta}}
+            middleware (dl/wrap-datalevin-save {:default-schema :test})
+            result     ((middleware (fn [_] {})) env)]
+
+        (is (contains? result ::form/errors) "Result must contain ::form/errors")
+        (is (vector? (::form/errors result)) "::form/errors must be a vector")
+        (is (empty? (::form/errors result)) "::form/errors should be empty when no errors"))))
+
+  (testing "save middleware preserves existing errors"
+    (tu/with-test-conn [conn]
+      (let [tid       (tempid/tempid)
+            real-id   (new-uuid)
+            delta     {[:account/id tid] {:account/id {:before nil :after real-id}
+                                          :account/name {:before nil :after "Test User"}}}
+            env       {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
+                       ::dlo/connections     {:test conn}
+                       ::form/params         {::form/delta delta}}
+            middleware (dl/wrap-datalevin-save {:default-schema :test})
+            base-errors [{:message "Validation error"}]
+            result     ((middleware (fn [_] {::form/errors base-errors})) env)]
+
+        (is (= base-errors (::form/errors result)) "Existing errors should be preserved"))))
+
+  (testing "save middleware with no delta returns form errors"
+    (tu/with-test-conn [conn]
+      (let [env       {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
+                       ::dlo/connections     {:test conn}
+                       ::form/params         {::form/delta {}}}
+            middleware (dl/wrap-datalevin-save {:default-schema :test})
+            result     ((middleware (fn [_] {})) env)]
+
+        (is (contains? result ::form/errors) "Result must contain ::form/errors even with no delta")
+        (is (vector? (::form/errors result)) "::form/errors must be a vector")
+        (is (empty? (::form/errors result)) "::form/errors should be empty when no errors")))))
+
+(deftest delete-middleware-returns-form-errors
+  (testing "delete middleware always returns ::form/errors vector"
+    (tu/with-test-conn [conn]
+      (let [real-id   (new-uuid)
+            _         (d/transact! conn [{:account/id real-id
+                                          :account/name "ToDelete"}])
+            env       {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
+                       ::dlo/connections     {:test conn}
+                       ::form/params         {:account/id real-id}}
+            middleware (dl/wrap-datalevin-delete {:default-schema :test})
+            result     ((middleware (fn [_] {})) env)]
+
+        (is (contains? result ::form/errors) "Result must contain ::form/errors")
+        (is (vector? (::form/errors result)) "::form/errors must be a vector")
+        (is (empty? (::form/errors result)) "::form/errors should be empty when no errors"))))
+
+  (testing "delete middleware preserves existing errors"
+    (tu/with-test-conn [conn]
+      (let [real-id   (new-uuid)
+            _         (d/transact! conn [{:account/id real-id
+                                          :account/name "ToDelete"}])
+            env       {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
+                       ::dlo/connections     {:test conn}
+                       ::form/params         {:account/id real-id}}
+            middleware (dl/wrap-datalevin-delete {:default-schema :test})
+            base-errors [{:message "Authorization error"}]
+            result     ((middleware (fn [_] {::form/errors base-errors})) env)]
+
+        (is (= base-errors (::form/errors result)) "Existing errors should be preserved"))))
+
+  (testing "delete middleware with no params returns form errors"
+    (tu/with-test-conn [conn]
+      (let [env       {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
+                       ::dlo/connections     {:test conn}
+                       ::form/params         {}}
+            middleware (dl/wrap-datalevin-delete {:default-schema :test})
+            result     ((middleware (fn [_] {})) env)]
+
+        (is (contains? result ::form/errors) "Result must contain ::form/errors even with no params")
+        (is (vector? (::form/errors result)) "::form/errors must be a vector")
+        (is (empty? (::form/errors result)) "::form/errors should be empty when no errors")))))
+
+;; ================================================================================
 ;; Delete Middleware Tests
 ;; ================================================================================
 
@@ -258,7 +348,7 @@
                                           :account/name "ToDelete"}])
             env       {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
                        ::dlo/connections     {:test conn}
-                       ::form/delete-params  [[:account/id real-id]]}
+                       ::form/params         {:account/id real-id}}
             middleware (dl/wrap-datalevin-delete {:default-schema :test})
             result     ((middleware (fn [_] {:deleted true})) env)]
 
@@ -273,7 +363,7 @@
     (tu/with-test-conn [conn]
       (let [env       {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
                        ::dlo/connections     {:test conn}
-                       ::form/delete-params  [[:account/id (new-uuid)]]}
+                       ::form/params         {:account/id (new-uuid)}}
             middleware (dl/wrap-datalevin-delete {:default-schema :test})
             result     ((middleware (fn [_] {:result :ok})) env)]
 
@@ -298,7 +388,7 @@
   (testing "delete throws when connection missing"
     (let [env       {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
                      ::dlo/connections     {}
-                     ::form/delete-params  [[:account/id (new-uuid)]]}
+                     ::form/params         {:account/id (new-uuid)}}
           middleware (dl/wrap-datalevin-delete {:default-schema :test})]
 
       (is (thrown-with-msg? clojure.lang.ExceptionInfo
