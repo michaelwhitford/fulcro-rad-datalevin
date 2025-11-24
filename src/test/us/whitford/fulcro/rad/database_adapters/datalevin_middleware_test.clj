@@ -25,7 +25,7 @@
                                           :account/name {:before nil :after "Test User"}}}
             env       {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
                        ::dlo/connections     {:test conn}
-                       ::form/delta          delta}
+                       ::form/params         {::form/delta delta}}
             base-handler (fn [_env] {:result :ok})
             middleware   (dl/wrap-datalevin-save {:default-schema :test})
             result       ((middleware base-handler) env)]
@@ -46,7 +46,7 @@
                                           :account/active? {:before nil :after true}}}
             env       {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
                        ::dlo/connections     {:test conn}
-                       ::form/delta          delta}
+                       ::form/params         {::form/delta delta}}
             middleware (dl/wrap-datalevin-save {:default-schema :test})
             result     ((middleware (fn [_] {})) env)]
 
@@ -68,7 +68,7 @@
             delta     {[:account/id real-id] {:account/name {:before "Original" :after "Updated"}}}
             env       {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
                        ::dlo/connections     {:test conn}
-                       ::form/delta          delta}
+                       ::form/params         {::form/delta delta}}
             middleware (dl/wrap-datalevin-save {:default-schema :test})
             _          ((middleware (fn [_] {})) env)]
 
@@ -89,7 +89,7 @@
                                            :account/name {:before nil :after "User 2"}}}
             env       {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
                        ::dlo/connections     {:test conn}
-                       ::form/delta          delta}
+                       ::form/params         {::form/delta delta}}
             middleware (dl/wrap-datalevin-save {:default-schema :test})
             result     ((middleware (fn [_] {})) env)]
 
@@ -106,7 +106,7 @@
     (tu/with-test-conn [conn]
       (let [env       {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
                        ::dlo/connections     {:test conn}
-                       ::form/delta          {}}
+                       ::form/params         {::form/delta {}}}
             middleware (dl/wrap-datalevin-save {:default-schema :test})
             result     ((middleware (fn [_] {:result :ok})) env)]
 
@@ -117,7 +117,7 @@
     (tu/with-test-conn [conn]
       (let [env       {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
                        ::dlo/connections     {:test conn}
-                       ::form/delta          nil}
+                       ::form/params         {::form/delta nil}}
             middleware (dl/wrap-datalevin-save {:default-schema :test})
             result     ((middleware (fn [_] {:result :ok})) env)]
 
@@ -133,7 +133,7 @@
             delta     {[:account/id real-id] {:account/email {:before "has@email.com" :after nil}}}
             env       {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
                        ::dlo/connections     {:test conn}
-                       ::form/delta          delta}
+                       ::form/params         {::form/delta delta}}
             middleware (dl/wrap-datalevin-save {:default-schema :test})
             _          ((middleware (fn [_] {})) env)]
 
@@ -190,8 +190,7 @@
                      :account/name {:before nil :after "RAD User"}}}
             env    {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
                     ::dlo/connections     {:test conn}
-                    ::form/delta          delta
-                    ::form/params         params
+                    ::form/params         (assoc params ::form/delta delta)
                     ::form/master-pk      :account/id}
             ;; Simulate RAD middleware stack
             base-handler (fn [env] {::form/id [:account/id (get-in env [::form/params :account/id])]
@@ -225,7 +224,7 @@
                      :account/name {:before nil :after "Serial Test"}}}
             env    {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
                     ::dlo/connections     {:test conn}
-                    ::form/delta          delta}
+                    ::form/params         {::form/delta delta}}
             middleware (dl/wrap-datalevin-save {:default-schema :test})
             result     ((middleware (fn [_] {:original :data})) env)]
 
@@ -277,7 +276,7 @@
       ;; CORRECT: Two-step process
       (let [middleware-fn (dl/wrap-datalevin-save {:default-schema :test})
             handler       (middleware-fn base-handler)  ;; Step 1: wrap handler
-            result        (handler {::form/delta nil})] ;; Step 2: call with env
+            result        (handler {::form/params {::form/delta nil}})] ;; Step 2: call with env
         (is (map? result))
         (is (= :result (:base result))))
 
@@ -297,7 +296,7 @@
     (let [delta     {[:account/id (new-uuid)] {:account/name {:before nil :after "Test"}}}
           env       {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
                      ::dlo/connections     {}  ;; Empty!
-                     ::form/delta          delta}
+                     ::form/params         {::form/delta delta}}
           middleware (dl/wrap-datalevin-save {:default-schema :test})]
 
       (is (thrown-with-msg? clojure.lang.ExceptionInfo
@@ -324,7 +323,7 @@
             env        {::attr/key->attribute {:account/id wrong-id
                                                :account/name wrong-name}
                         ::dlo/connections     {:test conn}
-                        ::form/delta          delta}
+                        ::form/params         {::form/delta delta}}
             middleware (dl/wrap-datalevin-save {:default-schema :test})]
 
         (try
@@ -340,7 +339,7 @@
     (let [delta      {[:account/id (new-uuid)] {:account/name {:before nil :after "Test"}}}
           env        {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
                       ;; Missing ::dlo/connections entirely
-                      ::form/delta          delta}
+                      ::form/params         {::form/delta delta}}
           middleware (dl/wrap-datalevin-save {:default-schema :test})]
 
       (is (thrown? Exception
@@ -374,7 +373,7 @@
             all-attrs (concat [tu/account-id tu/account-name] [item-id-other item-name-other])
             env       {::attr/key->attribute (tu/key->attribute-map all-attrs)
                        ::dlo/connections     {:test conn1 :other conn2}
-                       ::form/delta          delta}
+                       ::form/params         {::form/delta delta}}
             middleware (dl/wrap-datalevin-save {:default-schema :test})
             result     ((middleware (fn [_] {})) env)]
 

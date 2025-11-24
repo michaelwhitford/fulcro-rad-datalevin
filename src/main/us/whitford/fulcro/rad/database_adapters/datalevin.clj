@@ -2,20 +2,21 @@
   "Datalevin database adapter for Fulcro RAD. Provides automatic schema generation,
    resolver generation, and save/delete middleware for RAD forms."
   (:require
-    [clojure.spec.alpha :as s]
-    [com.fulcrologic.fulcro.algorithms.tempid :as tempid]
-    [com.fulcrologic.rad.attributes :as attr]
-    [com.fulcrologic.rad.authorization :as auth]
-    [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]
-    [com.fulcrologic.rad.form :as form]
-    [com.fulcrologic.rad.ids :refer [new-uuid]]
-    [com.wsscode.pathom3.connect.operation :as pco]
-    [com.wsscode.pathom3.connect.indexes :as pci]
-    [com.wsscode.pathom3.plugin :as p.plugin]
-    [datalevin.core :as d]
-    [edn-query-language.core :as eql]
-    [taoensso.encore :as enc]
-    [taoensso.timbre :as log]))
+   [clojure.spec.alpha :as s]
+   [com.fulcrologic.fulcro.algorithms.do-not-use :refer [deep-merge]]
+   [com.fulcrologic.fulcro.algorithms.tempid :as tempid]
+   [com.fulcrologic.rad.attributes :as attr]
+   [com.fulcrologic.rad.authorization :as auth]
+   [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]
+   [com.fulcrologic.rad.form :as form]
+   [com.fulcrologic.rad.ids :refer [new-uuid]]
+   [com.wsscode.pathom3.connect.operation :as pco]
+   [com.wsscode.pathom3.connect.indexes :as pci]
+   [com.wsscode.pathom3.plugin :as p.plugin]
+   [datalevin.core :as d]
+   [edn-query-language.core :as eql]
+   [taoensso.encore :as enc]
+   [taoensso.timbre :as log]))
 
 ;; ================================================================================
 ;; Configuration and Limits
@@ -55,7 +56,7 @@
 
 (defn get-metrics
   "Get current database metrics.
-   
+
    Returns a map with:
    - :transaction-count - total number of transactions
    - :transaction-errors - number of failed transactions
@@ -86,12 +87,12 @@
 
 (defn- transact-with-error-handling!
   "Execute a transaction with proper error handling and context.
-   
+
    Arguments:
    - conn: Datalevin connection
    - schema: schema identifier for error context
    - txn-data: transaction data to execute
-   
+
    Returns the transaction result.
    Throws ex-info with context on failure.
    Records metrics for monitoring."
@@ -113,11 +114,11 @@
 
 (defn- validate-connection!
   "Ensure connection exists for schema, throw if missing.
-   
+
    Arguments:
    - connections: map of schema -> connection
    - schema: the schema key to validate
-   
+
    Throws ex-info with available schemas if connection is missing."
   [connections schema]
   (when-not (get connections schema)
@@ -185,8 +186,8 @@
   (let [relevant-attrs (filter #(= schema-name (::attr/schema %)) attributes)]
     (into {}
           (comp
-            (map attr->schema)
-            (filter some?))
+           (map attr->schema)
+           (filter some?))
           relevant-attrs)))
 
 (defn ensure-schema!
@@ -196,7 +197,7 @@
    Arguments:
    - conn: existing Datalevin connection
    - schema: map of attribute schemas
-   
+
    Throws on incompatible schema changes."
   [conn schema]
   (when (seq schema)
@@ -274,7 +275,7 @@
    - pull-pattern: EQL pull pattern
 
    Returns a map of id -> entity data.
-   
+
    Throws if ids count exceeds *max-batch-size*.
    Logs warning for large batches (> 100 ids)."
   [db id-attr ids pull-pattern]
@@ -315,7 +316,7 @@
 
 (defn- validate-delta!
   "Validate delta structure, throw on invalid input.
-   
+
    Delta format: {[id-attr id] {attr {:before v :after v'} ...} ...}"
   [delta]
   (when-not (map? delta)
@@ -350,66 +351,98 @@
       (swap! tempid-counter dec))
     id))
 
+(defn- normalize-ident-id
+  "Normalize an ident ID value, extracting the actual ID from various formats.
+   Handles:
+   - Tempids
+   - Plain values (UUIDs, strings, etc.)
+   - Map format {:id value} (from some RAD scenarios)"
+  [id]
+  (cond
+    (tempid/tempid? id) id
+    (and (map? id) (contains? id :id)) (:id id)
+    :else id))
+
 (defn- ident->lookup-ref
-  "Convert Fulcro ident [attr id] to Datalevin lookup ref."
+  "Convert Fulcro ident [attr id] to Datalevin lookup ref.
+   Handles tempids and map-wrapped IDs."
   [[attr id]]
-  (if (tempid/tempid? id)
-    (tempid->txid id)
-    [attr id]))
+  (let [normalized-id (normalize-ident-id id)]
+    (if (tempid/tempid? normalized-id)
+      (tempid->txid normalized-id)
+      [attr normalized-id])))
 
 (defn- delta-entry->txn
   "Convert a single delta entry to Datalevin transaction data.
 
    Arguments:
    - key-attr: the identity attribute from the ident
-   - id: the entity id
+   - id: the entity id (may be a tempid, plain value, or {:id value} map)
    - delta: map of attribute changes {:attr {:before X :after Y}}
 
    Returns a vector of transaction operations (maps and/or retraction vectors)."
   [key-attr id delta]
-  (let [;; Check if this is a new entity creation (identity attr goes from nil to value)
-        is-new-entity? (and (not (tempid/tempid? id))
-                            (contains? delta key-attr)
-                            (nil? (get-in delta [key-attr :before])))
+  (let [;; Normalize the ID to handle {:id value} map format
+        normalized-id (normalize-ident-id id)
+        ;; Check if this is a new entity creation:
+        ;; 1. It has a tempid, OR
+        ;; 2. The identity attribute itself is in the delta with :before nil
+        ;;    (indicating the identity attribute is being set for the first time)
+        ;; 3. If identity attr is NOT in delta, but all other attrs have :before nil,
+        ;;    AND the ident ID was originally wrapped in {:id ...} format (common for new entities)
+        identity-attr-is-new? (and (contains? delta key-attr)
+                                   (nil? (get-in delta [key-attr :before])))
+        all-changes-from-nil? (every? (fn [[_ {:keys [before]}]] (nil? before)) delta)
+        id-was-wrapped? (and (map? id) (contains? id :id))
+        is-new-entity? (or (tempid/tempid? normalized-id)
+                           identity-attr-is-new?
+                           (and all-changes-from-nil? id-was-wrapped?))
         entity-id (cond
-                    (tempid/tempid? id) (tempid->txid id)
+                    (tempid/tempid? normalized-id) (tempid->txid normalized-id)
                     is-new-entity? (swap! tempid-counter dec) ;; Generate new temp ID
-                    :else [key-attr id]) ;; Use lookup ref for existing entity
+                    :else [key-attr normalized-id]) ;; Use lookup ref for existing entity
         ;; For new entities, extract the real ID value from the delta's :after
         ;; (not the TempId from the ident!)
-        real-id-value (if (tempid/tempid? id)
-                        (get-in delta [key-attr :after])
-                        id)
-        base-entity (if (or (tempid/tempid? id) is-new-entity?)
+        ;; If the key-attr is in the delta, use that; otherwise use normalized-id
+        ;; IMPORTANT: If the value is itself a tempid, extract the UUID from it
+        raw-id-value (if (contains? delta key-attr)
+                       (get-in delta [key-attr :after])
+                       normalized-id)
+        real-id-value (if (tempid/tempid? raw-id-value)
+                        (:id raw-id-value)
+                        raw-id-value)
+        base-entity (if is-new-entity?
                       {:db/id entity-id key-attr real-id-value}
                       {:db/id entity-id})
-        {updates false retractions true} 
+        {updates false retractions true}
         (group-by (fn [[attr {:keys [before after]}]]
                     (and (some? before) (nil? after)))
                   delta)
-        
+
         ;; Build update map
         entity-map (reduce-kv
-                     (fn [txn-data attr {:keys [before after]}]
-                       (if (and (some? after) (not= before after))
-                         (let [value (if (eql/ident? after)
-                                       (ident->lookup-ref after)
-                                       after)]
-                           (assoc txn-data attr value))
-                         txn-data))
-                     base-entity
-                     (into {} updates))
-        
+                    (fn [txn-data attr {:keys [before after]}]
+                      (if (and (some? after) (not= before after))
+                        (let [;; Extract UUID from tempids, handle idents, or use value as-is
+                              value (cond
+                                      (tempid/tempid? after) (:id after)
+                                      (eql/ident? after) (ident->lookup-ref after)
+                                      :else after)]
+                          (assoc txn-data attr value))
+                        txn-data))
+                    base-entity
+                    (into {} updates))
+
         ;; Build retraction operations
         retract-ops (mapv (fn [[attr {:keys [before]}]]
                             [:db/retract entity-id attr before])
                           retractions)
-        
+
         ;; Combine operations
         result (cond-> []
                  (> (count entity-map) 1) ;; Has more than just :db/id
                  (conj entity-map)
-                 
+
                  (seq retract-ops)
                  (into retract-ops))]
     result))
@@ -420,16 +453,21 @@
    Delta format: {[id-attr id] {attr {:before v :after v'} ...} ...}
 
    Returns a vector of transaction operations (maps and retraction vectors).
-   
+
    Throws ex-info if delta structure is invalid."
   [delta]
   (validate-delta! delta)
   (reduce-kv
-    (fn [txns [key-attr id :as ident] entity-delta]
-      (let [txn-ops (delta-entry->txn key-attr id entity-delta)]
-        (into txns txn-ops)))
-    []
-    delta))
+   (fn [txns [key-attr id :as ident] entity-delta]
+     (let [txn-ops (delta-entry->txn key-attr id entity-delta)]
+       (into txns txn-ops)))
+   []
+   delta))
+
+(comment
+  (let [d {[:account/id #uuid "29dcd458-c47e-4079-86a1-36777fefaea9"] {:account/name {:before "Bob Smith" :after "Bob Smithson"}}}
+        delta-txn (delta->txn d)]
+    delta-txn))
 
 (defn tempid->result-id
   "Extract the mapping from tempids to real ids from transaction result."
@@ -447,6 +485,35 @@
                        [tempid real-id])))))
           tempid-entries)))
 
+(defn keys-in-delta
+  "extract all keys from delta"
+  [delta]
+  (let [id-keys (into #{}
+                      (map first)
+                      (keys delta))
+        all-keys (into id-keys
+                       (mapcat keys)
+                       (vals delta))]
+    all-keys))
+
+(defn schemas-for-delta
+  "extract all schemas"
+  [{::attr/keys [key->attribute]} delta]
+  (let [all-keys (keys-in-delta delta)
+        schemas (into #{}
+                      (keep #(-> % key->attribute ::attr/schema))
+                      all-keys)]
+    schemas))
+
+(defn save-form!
+  "Do all the possible datalevin operations for the given form delta (save to all datalevin databases)"
+  [{::form/keys [delta] :as env}]
+  (let [schemas (schemas-for-delta env delta)
+        result (atom {:tempids {}})]
+    (doseq [schema schemas
+            :let [connection (-> env dlo/connections (get schema))
+                  {:keys [txn]} (delta->txn delta)]])))
+
 ;; ================================================================================
 ;; Save Middleware
 ;; ================================================================================
@@ -458,52 +525,51 @@
    - ::dlo/connections - map of schema name to Datalevin connection
 
    The middleware receives a delta (diff) and transacts it to the database.
-   
+
    Throws ex-info if:
    - Connection is missing for a schema
    - Transaction fails"
   ([]
    (wrap-datalevin-save {}))
   ([{:keys [default-schema]
-     :or   {default-schema :main}}]
+     :or   {default-schema :main} :as props}]
    (fn [save-middleware]
      (fn [{::attr/keys [key->attribute]
+           ::form/keys [params]
            ::dlo/keys  [connections]
            :as         env}]
        (let [save-result (save-middleware env)
-             delta       (::form/delta env)
+             delta       (::form/delta params)
              ;; Only proceed with save if the base handler didn't return an error
              should-save? (not (false? (::form/complete? save-result)))
-             schemas     (into #{}
-                               (map (fn [[[k _] _]]
-                                      (or (::attr/schema (get key->attribute k))
-                                          default-schema)))
-                               delta)]
+             schemas     (schemas-for-delta env delta)]
+         (tap> {:from ::wrap-datalevin-save :env env :save-result save-result :delta delta
+                :should-save? should-save? :schemas schemas :props props :save-middleware (str save-middleware)})
          (if (and (seq delta) should-save?)
            ;; Bind tempid mappings for consistent id generation
            (binding [*tempid-mappings* (atom {})]
              (let [result (reduce
-                            (fn [acc schema]
-                              (validate-connection! connections schema)
-                              (let [conn          (get connections schema)
-                                    schema-delta  (into {}
-                                                        (filter (fn [[[k _] _]]
-                                                                  (let [attr (get key->attribute k)]
-                                                                    (or (nil? attr)
-                                                                        (= schema (::attr/schema attr))
-                                                                        (nil? (::attr/schema attr))))))
-                                                        delta)
-                                    txn-data      (delta->txn schema-delta)
-                                    _             (log/debug "Transacting to" schema ":" txn-data)
-                                    tx-result     (when (seq txn-data)
-                                                    (transact-with-error-handling! conn schema txn-data))
-                                    tempid-map    (when tx-result
-                                                    (tempid->result-id tx-result schema-delta))]
-                                (cond-> acc
-                                  (seq tempid-map)
-                                  (update :tempids merge tempid-map))))
-                            save-result
-                            schemas)]
+                           (fn [acc schema]
+                             (validate-connection! connections schema)
+                             (let [conn          (get connections schema)
+                                   schema-delta  (into {}
+                                                       (filter (fn [[[k _] _]]
+                                                                 (let [attr (get key->attribute k)]
+                                                                   (or (nil? attr)
+                                                                       (= schema (::attr/schema attr))
+                                                                       (nil? (::attr/schema attr))))))
+                                                       delta)
+                                   txn-data      (delta->txn schema-delta)
+                                   _             (log/debug "Transacting to" schema ":" txn-data)
+                                   tx-result     (when (seq txn-data)
+                                                   (transact-with-error-handling! conn schema txn-data))
+                                   tempid-map    (when tx-result
+                                                   (tempid->result-id tx-result schema-delta))]
+                               (cond-> acc
+                                 (seq tempid-map)
+                                 (update :tempids merge tempid-map))))
+                           save-result
+                           schemas)]
                ;; Ensure :tempids is always present, even if empty
                ;; This is required for RAD's EQL queries to work correctly
                (if (contains? result :tempids)
@@ -523,7 +589,7 @@
    - ::dlo/connections - map of schema name to Datalevin connection
 
    The middleware retracts entities by their identity attribute.
-   
+
    Throws ex-info if:
    - Connection is missing for a schema
    - Transaction fails"
@@ -573,15 +639,15 @@
   (when generate-resolvers?
     (let [outputs (mapv ::attr/qualified-key output-attrs)]
       (pco/resolver
-        (symbol (str (namespace qualified-key) "." (name qualified-key) "-resolver"))
-        {::pco/input   [qualified-key]
-         ::pco/output  outputs
-         ::pco/batch?  true}
-        (fn [{::dlo/keys [databases]} inputs]
-          (let [db    (get databases schema)
-                ids   (mapv #(get % qualified-key) inputs)
-                data  (get-by-ids db qualified-key ids outputs)]
-            (mapv #(get data (get % qualified-key) {}) inputs)))))))
+       (symbol (str (namespace qualified-key) "." (name qualified-key) "-resolver"))
+       {::pco/input   [qualified-key]
+        ::pco/output  outputs
+        ::pco/batch?  true}
+       (fn [{::dlo/keys [databases]} inputs]
+         (let [db    (get databases schema)
+               ids   (mapv #(get % qualified-key) inputs)
+               data  (get-by-ids db qualified-key ids outputs)]
+           (mapv #(get data (get % qualified-key) {}) inputs)))))))
 
 (defn- ref-resolvers
   "Generate resolvers for reference attributes (to-one and to-many refs).
@@ -594,31 +660,31 @@
    all-attributes]
   (when (and generate-resolvers? target)
     (let [target-id-attr (first (filter #(= target (::attr/qualified-key %))
-                                         all-attributes))]
+                                        all-attributes))]
       (if-not target-id-attr
         (do
           (log/warn "Reference target not found for" qualified-key "target:" target)
           nil)
         (when (::attr/identity? target-id-attr)
           [(pco/resolver
-             (symbol (str (namespace qualified-key) "." (name qualified-key) "-ref-resolver"))
-             {::pco/input  [qualified-key]
-              ::pco/output [{qualified-key [target]}]}
-             (fn [{::dlo/keys [databases]} input]
-               (let [db       (get databases schema)
-                     ref-val  (get input qualified-key)]
-                 (cond
-                   (nil? ref-val)
-                   {qualified-key nil}
+            (symbol (str (namespace qualified-key) "." (name qualified-key) "-ref-resolver"))
+            {::pco/input  [qualified-key]
+             ::pco/output [{qualified-key [target]}]}
+            (fn [{::dlo/keys [databases]} input]
+              (let [db       (get databases schema)
+                    ref-val  (get input qualified-key)]
+                (cond
+                  (nil? ref-val)
+                  {qualified-key nil}
 
-                   (map? ref-val)
-                   {qualified-key ref-val}
+                  (map? ref-val)
+                  {qualified-key ref-val}
 
-                   (and (= :many cardinality) (sequential? ref-val))
-                   {qualified-key (vec ref-val)}
+                  (and (= :many cardinality) (sequential? ref-val))
+                  {qualified-key (vec ref-val)}
 
-                   :else
-                   {qualified-key {target ref-val}}))))])))))
+                  :else
+                  {qualified-key {target ref-val}}))))])))))
 
 (defn generate-resolvers
   "Generate all automatic resolvers for the given RAD attributes.
@@ -636,23 +702,23 @@
         ref-attrs   (filter #(= :ref (::attr/type %)) attributes)
         key->attrs  (group-by ::attr/qualified-key attributes)
         id->outputs (reduce
-                      (fn [acc attr]
-                        (let [identities (::attr/identities attr)]
-                          (reduce
-                            (fn [a id]
-                              (update a id (fnil conj []) attr))
-                            acc
-                            identities)))
-                      {}
-                      attributes)]
+                     (fn [acc attr]
+                       (let [identities (::attr/identities attr)]
+                         (reduce
+                          (fn [a id]
+                            (update a id (fnil conj []) attr))
+                          acc
+                          identities)))
+                     {}
+                     attributes)]
     (concat
-      ;; ID resolvers
-      (keep (fn [id-attr]
-              (let [outputs (get id->outputs (::attr/qualified-key id-attr) [])]
-                (id-resolver id-attr outputs)))
-            id-attrs)
-      ;; Reference resolvers
-      (mapcat #(ref-resolvers % attributes) ref-attrs))))
+     ;; ID resolvers
+     (keep (fn [id-attr]
+             (let [outputs (get id->outputs (::attr/qualified-key id-attr) [])]
+               (id-resolver id-attr outputs)))
+           id-attrs)
+     ;; Reference resolvers
+     (mapcat #(ref-resolvers % attributes) ref-attrs))))
 
 ;; ================================================================================
 ;; Pathom3 Plugin
@@ -675,15 +741,15 @@
    (fn [process]
      (fn [env ast-or-graph entity-tree*]
        (let [dbs (reduce-kv
-                   (fn [m schema conn]
-                     (assoc m schema (d/db conn)))
-                   {}
-                   connections)]
+                  (fn [m schema conn]
+                    (assoc m schema (d/db conn)))
+                  {}
+                  connections)]
          (process (assoc env
-                    ::dlo/connections connections
-                    ::dlo/databases dbs)
-           ast-or-graph
-           entity-tree*))))})
+                         ::dlo/connections connections
+                         ::dlo/databases dbs)
+                  ast-or-graph
+                  entity-tree*))))})
 
 ;; ================================================================================
 ;; Utility Functions
@@ -698,10 +764,10 @@
    Returns a map suitable for passing to resolvers."
   [connections]
   (let [dbs (reduce-kv
-              (fn [m schema conn]
-                (assoc m schema (d/db conn)))
-              {}
-              connections)]
+             (fn [m schema conn]
+               (assoc m schema (d/db conn)))
+             {}
+             connections)]
     {::dlo/connections connections
      ::dlo/databases   dbs}))
 
@@ -713,7 +779,7 @@
    - attributes: collection of RAD attributes
 
    Returns a temporary Datalevin connection.
-   
+
    WARNING: This creates a directory under /tmp that will not be automatically
    cleaned up. The caller is responsible for calling d/close on the connection.
    Consider using create-temp-database! for automatic cleanup support."
@@ -798,3 +864,8 @@
    Convenience wrapper around datalevin.core/pull-many."
   [db pattern eids]
   (d/pull-many db pattern eids))
+
+
+(comment
+  (let [conn (d/get-conn "data/test")])
+  (d/transact! conn data))

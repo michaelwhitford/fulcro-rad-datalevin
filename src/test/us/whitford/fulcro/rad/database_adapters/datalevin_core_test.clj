@@ -29,6 +29,9 @@
       (is (= :db.type/ref (get-in schema [:account/items :db/valueType])))
       (is (= :db.cardinality/many (get-in schema [:account/items :db/cardinality])))))
 
+  (comment
+    (dl/automatic-schema :test tu/all-test-attributes))
+
   (testing "filters by schema name"
     (let [other-attr {::attr/qualified-key :other/attr
                       ::attr/type          :string
@@ -170,18 +173,22 @@
   (testing "TempId ident uses real UUID value from delta, not TempId itself"
     (let [tid      (tempid/tempid)
           real-id  (new-uuid)
-          delta    {[:account/id tid] 
+          delta    {[:account/id tid]
                     {:account/id {:before nil :after real-id}
                      :account/name {:before nil :after "Test"}}}
           txn-data (dl/delta->txn delta)
           entity   (first (filter map? txn-data))]
-      
+
       (is (uuid? (:account/id entity))
           "account/id must be UUID, not TempId")
       (is (= real-id (:account/id entity))
           "Must use real UUID from delta :after value")
       (is (not (tempid/tempid? (:account/id entity)))
           "Must NOT be a TempId"))))
+
+(comment
+  (dl/delta->txn {[:account/id 1] {:account/name {:before "Bob Smith" :after "Bob Smithson"}}})
+  (dl/generate-resolvers tu/all-test-attributes))
 
 ;; ================================================================================
 ;; Resolver Generation Tests
@@ -374,10 +381,10 @@
           id (new-uuid)]
       (d/transact! conn [{:account/id id :account/name "Test"}])
       (let [result (ffirst (d/q '[:find ?name
-                                   :in $ ?id
-                                   :where [?e :account/id ?id]
-                                   [?e :account/name ?name]]
-                                 (d/db conn) id))]
+                                  :in $ ?id
+                                  :where [?e :account/id ?id]
+                                  [?e :account/name ?name]]
+                                (d/db conn) id))]
         (is (= "Test" result)))
       (cleanup!))))
 
@@ -387,10 +394,10 @@
                    (let [id (new-uuid)]
                      (d/transact! conn [{:account/id id :account/name "Macro Test"}])
                      (ffirst (d/q '[:find ?name
-                                     :in $ ?id
-                                     :where [?e :account/id ?id]
-                                     [?e :account/name ?name]]
-                                   (d/db conn) id))))]
+                                    :in $ ?id
+                                    :where [?e :account/id ?id]
+                                    [?e :account/name ?name]]
+                                  (d/db conn) id))))]
       (is (= "Macro Test" result))))
 
   (testing "cleans up even on exception"
