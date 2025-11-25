@@ -103,8 +103,9 @@ Or use a local checkout:
                ;; other model attributes
                )))
 
+;; Generate resolvers for specific schema
 (def auto-resolvers
-  (dl/generate-resolvers all-attributes))
+  (dl/generate-resolvers all-attributes :main))
 
 (def indexes
   (pci/register
@@ -113,10 +114,17 @@ Or use a local checkout:
       ;; custom resolvers
       )))
 
-;; Add database plugin
+;; Create Pathom plugin with database mapper
+(def database-mapper
+  (fn [_env] @db/connections))
+
+(def pathom-plugins
+  [(dl/pathom-plugin database-mapper)])
+
 (def env
   (-> indexes
-      (assoc ::dlo/connections @db/connections)))
+      ;; plugins will add ::dlo/connections and ::dlo/databases
+      ))
 ----
 
 === 4. Configure Form Middleware
@@ -129,11 +137,21 @@ Or use a local checkout:
     [com.fulcrologic.rad.middleware.save-middleware :as save-mw]
     [com.fulcrologic.rad.middleware.delete-middleware :as delete-mw]))
 
+;; Middleware wraps the base handler
 (def save-middleware
-  (-> (dl/wrap-datalevin-save)
+  (-> identity-middleware
+      (dl/wrap-datalevin-save)
       (save-mw/wrap-rewrite-values)))
 
 (def delete-middleware
+  (-> identity-middleware
+      (dl/wrap-datalevin-delete)))
+
+;; Or use 0-arity for terminal handler
+(def save-middleware-terminal
+  (dl/wrap-datalevin-save))
+
+(def delete-middleware-terminal
   (dl/wrap-datalevin-delete))
 ----
 

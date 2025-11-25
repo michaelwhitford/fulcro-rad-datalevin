@@ -9,6 +9,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+#### Code Deduplication (2024-11-25)
+- **Removed duplicate test utilities**: Consolidated test database helpers into `test_utils.clj`
+  - Removed from `utilities.clj`: `empty-db-connection`, `create-temp-database!`, `with-temp-database`, `seed-database!`, `mock-resolver-env`
+  - Moved to `test_utils.clj`: `seed-database!`, `mock-resolver-env`
+  - Test utilities are now exclusively in the test namespace where they belong
+- **Simplified `utilities.clj`**: Now only contains production query helpers (`q`, `pull`, `pull-many`)
+  - Removed redundant re-exports of functions from other namespaces
+  - Users should import from main `datalevin.clj` namespace for all public API functions
+- **Fixed `datalevin.clj` re-exports**: Now directly re-exports from source namespaces
+  - `get-by-ids` from `generate-resolvers`
+  - `delta->txn`, `keys-in-delta`, `schemas-for-delta`, `save-form!` from `wrap-datalevin-save`
+  - Removed incorrect indirection through `utilities.clj`
+- **Fixed bug in `start-database!`**: Now correctly uses the `:schema` parameter instead of ignoring it
+  - Previously always used `:default` when calling `automatic-schema`
+  - Now properly passes through the schema name from config
+- **Added clj-kondo configuration**: Created hooks for proper linting of test macros
+  - `with-test-conn` and `with-test-conn-attrs` now lint correctly
+  - Zero linting errors in codebase ✅
+- **Removed unnecessary files**: Cleaned up temporary documentation
+  - Removed `PLAN.md` (was empty, not being used)
+  - Removed `DEDUPLICATION_SUMMARY.md` (changes now documented in CHANGELOG)
+- **Tests**: All 13 tests still passing with 69 assertions ✅
+
+#### Major Refactoring - XTDB-Style API (BREAKING CHANGES)
+- **BREAKING**: Complete API alignment with fulcro-rad-xtdb adapter
+- **BREAKING**: Restructured codebase to follow modular pattern from fulcro-rad-xtdb example
+- Split monolithic `datalevin.clj` (~900 lines) into focused modules:
+  - `datalevin/start_databases.clj` - Database lifecycle and schema generation
+  - `datalevin/pathom_plugin.clj` - Pathom3 plugin for database access
+  - `datalevin/generate_resolvers.clj` - Automatic resolver generation
+  - `datalevin/wrap_datalevin_save.clj` - Save form middleware
+  - `datalevin/wrap_datalevin_delete.clj` - Delete form middleware
+  - `datalevin/utilities.clj` - Query helpers, delta processing, and test utilities
+- Main `datalevin.clj` now serves as a clean API facade, re-exporting all public functions
+- All tests continue to pass (31 tests, 172 assertions, 0 failures) ✅
+- Improved code organization and maintainability following established patterns
+
+#### API Changes (Breaking)
+
+**generate-resolvers:**
+- **BREAKING**: Schema parameter now required (was optional)
+- Old: `(generate-resolvers attributes)` or `(generate-resolvers attributes schema)`
+- New: `(generate-resolvers attributes schema)` - schema required
+- Matches XTDB adapter exactly
+
+**Middleware:**
+- **BREAKING**: Simplified from 3-level to 2-level pattern (matches XTDB)
+- Old: `((wrap-datalevin-save {:default-schema :main}) handler)`
+- New: `(wrap-datalevin-save handler)` or `(wrap-datalevin-save)` for terminal
+- Schema is now determined from `::attr/schema` in attributes
+- No longer accepts options map
+
+**Removed Features:**
+- **BREAKING**: Removed `all-ids-resolver` (not in XTDB)
+- **BREAKING**: Removed `ref-resolvers` (not in XTDB)
+- **BREAKING**: Removed `id-resolver` from public API (internal only)
+- Removed explicit validation functions (internal implementation details)
+
 #### Code Organization
 - Simplified PLAN.md to minimal structure - removed completed 794-line production stability plan
 - Consolidated test suite from 4 separate test files into single comprehensive `datalevin_test.clj`
@@ -18,6 +76,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Documentation
 - Enhanced AGENTS.md with lint command documentation
 - Clarified file creation guidelines to emphasize using single files
+- Added inline documentation for all public functions
+- Added note about `with-temp-database` macro location for proper imports
 
 #### Core Functionality
 - Refactored `save-form!` function to be testable independently of middleware context
@@ -27,6 +87,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Test Utilities
 - Added clj-kondo configuration to `test_utils.clj` for proper macro linting
+- `with-temp-database` macro now available via: 
+  `(require '[us.whitford.fulcro.rad.database-adapters.datalevin.utilities :refer [with-temp-database]])`
 
 ## [0.1.0-beta1] - 2024-11-25
 

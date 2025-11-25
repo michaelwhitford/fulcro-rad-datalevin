@@ -1,5 +1,0 @@
-# PLAN
-
-## Overview
-
-## Pending

@@ -1,7 +1,5 @@
 (ns us.whitford.fulcro.rad.database-adapters.test-utils
   "Shared test utilities and test data for datalevin adapter tests."
-  {:clj-kondo/config '{:lint-as {us.whitford.fulcro.rad.database-adapters.test-utils/with-test-conn-attrs clojure.core/defn
-                                 us.whitford.fulcro.rad.database-adapters.test-utils/with-test-conn clojure.core/defn}}}
   (:require
    [com.fulcrologic.rad.attributes :as attr]
    [us.whitford.fulcro.rad.database-adapters.datalevin :as dl]
@@ -129,3 +127,29 @@
       (when (.exists dir)
         (doseq [file (reverse (file-seq dir))]
           (.delete file))))))
+
+(defn seed-database!
+  "Seed a database with initial data.
+
+   Arguments:
+   - conn: Datalevin connection
+   - data: vector of entity maps to transact"
+  [conn data]
+  (when (seq data)
+    (d/transact! conn data)))
+
+(defn mock-resolver-env
+  "Create a mock Pathom environment for testing resolvers.
+
+   Arguments:
+   - connections: map of schema name to Datalevin connection
+
+   Returns a map suitable for passing to resolvers."
+  [connections]
+  (let [dbs (reduce-kv
+             (fn [m schema conn]
+               (assoc m schema (d/db conn)))
+             {}
+             connections)]
+    {::dlo/connections connections
+     ::dlo/databases   dbs}))

@@ -1,6 +1,6 @@
 # Agent Guidelines for fulcro-rad-datalevin
 
-Create documents as needed. Use a single PLAN.md for planning. Use a single CHANGELOG.md for changes. Avoid making extra summary files.
+Create documents as needed. Use a single PLAN.md for planning. Use a single CHANGELOG.md for changes. Avoid making extra summary files. Ask the user clarifying questions where appropriate.
 
 ## Build & Test Commands
 
