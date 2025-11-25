@@ -7,17 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-beta1] - 2024-11-25
+
+### Overview
+
+First beta release of fulcro-rad-datalevin, a Datalevin database adapter for Fulcro RAD. This release includes full CRUD functionality, comprehensive error handling, and production-ready features.
+
+**Test Coverage**: 56 tests, 269 assertions, 0 failures ✅
+
 ### Changed
 
 #### Test Suite Organization
-- Consolidated test suite from multiple files into 3 well-organized files:
+- Consolidated test suite into 4 well-organized files:
   - `test_utils.clj` - Shared utilities, fixtures, and test data
-  - `datalevin_core_test.clj` - Core functionality tests (16 tests)
+  - `datalevin_core_test.clj` - Core functionality tests (23 tests)
   - `datalevin_save_test.clj` - Save/delete middleware tests (15 tests)
+  - `datalevin_new_entity_test.clj` - New entity creation tests (9 tests)
+  - `datalevin_middleware_test.clj` - Middleware composition tests (9 tests)
 - Removed redundant test files and duplicate test coverage
 - All tempid handling tests clearly marked as CRITICAL
-- Added comprehensive test documentation in `TEST_ORGANIZATION.md`
-- Total: 31 tests with 145+ assertions, all passing ✅
+- Total: 56 tests with 269 assertions, all passing ✅
 
 ### Fixed
 

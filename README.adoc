@@ -490,6 +490,92 @@ clj -X:install
 clj -X:deploy
 ----
 
+== Troubleshooting
+
+=== Forms Don't Save or Revert After Save
+
+**Symptoms**: Form appears to save but immediately reverts, or changes don't persist to database.
+
+**Common Causes**:
+
+1. **Middleware not properly configured** - Ensure middleware wraps your handler:
++
+[source,clojure]
+----
+(def wrapped-handler
+  (-> base-handler
+      (dl/wrap-datalevin-save {:default-schema :main})
+      (dl/wrap-datalevin-delete)))
+----
+
+2. **Missing database connection** - Verify `::dlo/connections` is in your Pathom environment:
++
+[source,clojure]
+----
+{::dlo/connections @connections
+ ::dlo/databases   (into {} (map (fn [[k v]] [k (d/db v)])) @connections)}
+----
+
+3. **Schema mismatch** - Ensure attribute schema names match connection keys:
++
+[source,clojure]
+----
+;; Attribute defines :main
+(defattr id :account/id :uuid
+  {::attr/schema :main})
+
+;; Connection must use :main
+(swap! connections assoc :main conn)
+----
+
+**Debug Steps**:
+
+1. Run the test suite to verify the adapter works: `clojure -M:run-tests`
+2. If tests pass, the issue is in your app configuration
+3. Add logging to verify middleware returns a map with `:tempids` key
+4. Check server logs for connection errors
+
+=== "No database connection configured for schema"
+
+**Cause**: Your attributes reference a schema that doesn't have a connection.
+
+**Solution**: Add the missing connection or use `default-schema`:
+
+[source,clojure]
+----
+;; Option 1: Add connection
+(swap! connections assoc :production conn)
+
+;; Option 2: Use default schema in middleware
+(dl/wrap-datalevin-save {:default-schema :production})
+----
+
+=== Batch Size Limit Errors
+
+**Cause**: Trying to fetch more than 1000 entities in a single query.
+
+**Solution**: Either paginate your queries or increase the limit:
+
+[source,clojure]
+----
+(binding [dl/*max-batch-size* 5000]
+  ;; your large query here
+  )
+----
+
+=== Test Database Cleanup Issues
+
+**Symptom**: `/tmp` fills up with test databases.
+
+**Solution**: Use the `with-temp-database` macro for automatic cleanup:
+
+[source,clojure]
+----
+(dl/with-temp-database [conn :test test-attributes]
+  ;; test code here - database automatically cleaned up
+  )
+----
+
 == License
 
 Copyright (c) Michael Whitford

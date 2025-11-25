@@ -1,5 +1,7 @@
 # Agent Guidelines for fulcro-rad-datalevin
 
+Create documents as needed. Use PLAN.md for planning, and CHANGELOG.md for changes. Avoid creating extra files to summarize sessions.
+
 ## Build & Test Commands
 
 ```bash
