@@ -633,6 +633,43 @@
                data  (get-by-ids db qualified-key ids outputs)]
            (mapv #(get data (get % qualified-key) {}) inputs)))))))
 
+(defn all-ids-resolver
+  "Generate a resolver that returns all entity IDs for a given entity type.
+
+   Arguments:
+   - id-attr: the identity attribute (RAD attribute map)
+
+   Returns a resolver that provides all IDs for the entity type.
+   The output key is formatted as :all-<namespace-plural> (e.g., :all-accounts).
+   The resolver returns a vector of ID maps (e.g., [{:account/id uuid1} {:account/id uuid2}])."
+  [{::attr/keys [qualified-key schema]
+    ::dlo/keys  [generate-resolvers?]
+    :or         {generate-resolvers? true}
+    :as         id-attr}]
+  (when generate-resolvers?
+    (let [ns-part     (namespace qualified-key)
+          name-part   (name qualified-key)
+          ;; Create the all-ids key (e.g., :all-accounts)
+          ;; Try to pluralize the namespace if it's not already plural
+          plural-ns   (if (.endsWith ns-part "s")
+                        ns-part
+                        (str ns-part "s"))
+          all-ids-key (keyword (str "all-" plural-ns))
+          ;; Output will be a join that returns the id for each entity
+          output-spec {all-ids-key [qualified-key]}]
+      (pco/resolver
+       (symbol (str (namespace qualified-key) ".all-" plural-ns "-resolver"))
+       {::pco/output [output-spec]}
+       (fn [{::dlo/keys [databases]} _input]
+         (let [db     (get databases schema)
+               ;; Query for all entity IDs
+               result (d/q '[:find ?v
+                             :in $ ?attr
+                             :where [?e ?attr ?v]]
+                           db qualified-key)
+               ids    (mapv (fn [[id]] {qualified-key id}) result)]
+           {all-ids-key ids}))))))
+
 (defn- ref-resolvers
   "Generate resolvers for reference attributes (to-one and to-many refs).
 
@@ -675,6 +712,7 @@
 
    This includes:
    - ID resolvers for each identity attribute
+   - All-IDs resolvers for each identity attribute (returns all IDs for entity type)
    - Reference resolvers for ref attributes
 
    Arguments:
@@ -701,6 +739,8 @@
              (let [outputs (get id->outputs (::attr/qualified-key id-attr) [])]
                (id-resolver id-attr outputs)))
            id-attrs)
+     ;; All-IDs resolvers (e.g., :all-accounts)
+     (keep all-ids-resolver id-attrs)
      ;; Reference resolvers
      (mapcat #(ref-resolvers % attributes) ref-attrs))))
 
@@ -851,5 +891,18 @@
 
 
 (comment
-  (let [conn (d/get-conn "data/test")])
-  (d/transact! conn data))
+  ;; Example usage of resolvers
+  (let [attributes [{::attr/qualified-key :account/id
+                     ::attr/type          :uuid
+                     ::attr/schema        :production
+                     ::attr/identity?     true}
+                    {::attr/qualified-key :account/name
+                     ::attr/type          :string
+                     ::attr/schema        :production
+                     ::attr/identities    #{:account/id}}]
+        resolvers (generate-resolvers attributes)]
+    ;; Resolvers will include:
+    ;; 1. ID resolver for :account/id
+    ;; 2. All-IDs resolver that returns :all-accounts
+    ;;    Usage: Query [:all-accounts] => {:all-accounts [{:account/id #uuid "..."} ...]}
+    resolvers))

@@ -210,7 +210,25 @@
       (is (contains? (set outputs) :account/name))
       (is (contains? (set outputs) :account/email))
       (is (contains? (set outputs) :account/active?))
-      (is (contains? (set outputs) :account/balance)))))
+      (is (contains? (set outputs) :account/balance))))
+
+  (testing "generates all-ids resolvers for each entity type"
+    (let [resolvers (dl/generate-resolvers tu/all-test-attributes)
+          ;; Find the all-accounts resolver by checking output
+          all-accounts-res (first (filter (fn [res]
+                                            (let [output (::pco/output (:config res))]
+                                              (some #(and (map? %)
+                                                          (contains? % :all-accounts))
+                                                    output)))
+                                          resolvers))
+          all-items-res (first (filter (fn [res]
+                                         (let [output (::pco/output (:config res))]
+                                           (some #(and (map? %)
+                                                       (contains? % :all-items))
+                                                 output)))
+                                       resolvers))]
+      (is (some? all-accounts-res) "Should generate all-accounts resolver")
+      (is (some? all-items-res) "Should generate all-items resolver"))))
 
 (deftest id-resolver-functionality
   (testing "resolver fetches entity by id"
@@ -251,6 +269,49 @@
             result   (resolver env [{:account/id (new-uuid)}])]
         (is (= 1 (count result)))
         (is (= {} (first result)))))))
+
+(deftest all-ids-resolver-functionality
+  (testing "resolver returns all entity IDs"
+    (tu/with-test-conn [conn]
+      (let [id1      (new-uuid)
+            id2      (new-uuid)
+            id3      (new-uuid)
+            _        (d/transact! conn [{:account/id id1 :account/name "User 1"}
+                                        {:account/id id2 :account/name "User 2"}
+                                        {:account/id id3 :account/name "User 3"}])
+            resolver (dl/all-ids-resolver tu/account-id)
+            env      (dl/mock-resolver-env {:test conn})
+            result   (resolver env {})]
+        (is (contains? result :all-accounts) "Should have :all-accounts key")
+        (is (= 3 (count (:all-accounts result))) "Should return all 3 accounts")
+        (let [returned-ids (set (map :account/id (:all-accounts result)))]
+          (is (contains? returned-ids id1))
+          (is (contains? returned-ids id2))
+          (is (contains? returned-ids id3))))))
+
+  (testing "resolver returns empty vector when no entities exist"
+    (tu/with-test-conn [conn]
+      (let [resolver (dl/all-ids-resolver tu/account-id)
+            env      (dl/mock-resolver-env {:test conn})
+            result   (resolver env {})]
+        (is (contains? result :all-accounts))
+        (is (vector? (:all-accounts result)))
+        (is (empty? (:all-accounts result))))))
+
+  (testing "resolver works for different entity types"
+    (tu/with-test-conn [conn]
+      (let [item1    (new-uuid)
+            item2    (new-uuid)
+            _        (d/transact! conn [{:item/id item1 :item/name "Item 1"}
+                                        {:item/id item2 :item/name "Item 2"}])
+            resolver (dl/all-ids-resolver tu/item-id)
+            env      (dl/mock-resolver-env {:test conn})
+            result   (resolver env {})]
+        (is (contains? result :all-items) "Should have :all-items key")
+        (is (= 2 (count (:all-items result))) "Should return all 2 items")
+        (let [returned-ids (set (map :item/id (:all-items result)))]
+          (is (contains? returned-ids item1))
+          (is (contains? returned-ids item2)))))))
 
 ;; ================================================================================
 ;; Query Utility Tests
