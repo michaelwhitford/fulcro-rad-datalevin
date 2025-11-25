@@ -1,5 +1,7 @@
 (ns us.whitford.fulcro.rad.database-adapters.test-utils
   "Shared test utilities and test data for datalevin adapter tests."
+  {:clj-kondo/config '{:lint-as {us.whitford.fulcro.rad.database-adapters.test-utils/with-test-conn-attrs clojure.core/defn
+                                 us.whitford.fulcro.rad.database-adapters.test-utils/with-test-conn clojure.core/defn}}}
   (:require
    [com.fulcrologic.rad.attributes :as attr]
    [us.whitford.fulcro.rad.database-adapters.datalevin :as dl]

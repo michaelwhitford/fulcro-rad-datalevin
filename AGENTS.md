@@ -1,6 +1,6 @@
 # Agent Guidelines for fulcro-rad-datalevin
 
-Create documents as needed. Use PLAN.md for planning, and CHANGELOG.md for changes. Avoid creating extra files to summarize sessions.
+Create documents as needed. Use a single PLAN.md for planning. Use a single CHANGELOG.md for changes. Avoid making extra summary files.
 
 ## Build & Test Commands
 
@@ -16,6 +16,12 @@ clojure -M:run-tests --focus us.whitford.fulcro.rad.database-adapters.datalevin-
 
 # Check outdated dependencies
 clojure -M:outdated
+```
+
+## Lint Command
+
+```bash
+clj-kondo --lint .
 ```
 
 ## Code Style

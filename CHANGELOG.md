@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+#### Code Organization
+- Simplified PLAN.md to minimal structure - removed completed 794-line production stability plan
+- Consolidated test suite from 4 separate test files into single comprehensive `datalevin_test.clj`
+- Removed obsolete test files: `datalevin_core_test.clj`, `datalevin_middleware_test.clj`, `datalevin_new_entity_test.clj`, `datalevin_save_test.clj`
+- Maintained full test coverage with improved organization and reduced duplication
+
+#### Documentation
+- Enhanced AGENTS.md with lint command documentation
+- Clarified file creation guidelines to emphasize using single files
+
+#### Core Functionality
+- Refactored `save-form!` function to be testable independently of middleware context
+- Improved function docstrings with clear parameter and return value documentation
+- Simplified `wrap-datalevin-save` middleware to delegate to `save-form!`
+- Enhanced error handling with validation and helpful error messages
+
+#### Test Utilities
+- Added clj-kondo configuration to `test_utils.clj` for proper macro linting
+
 ## [0.1.0-beta1] - 2024-11-25
 
 ### Overview

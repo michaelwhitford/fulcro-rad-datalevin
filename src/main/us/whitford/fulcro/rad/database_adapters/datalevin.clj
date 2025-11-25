@@ -460,13 +460,62 @@
     schemas))
 
 (defn save-form!
-  "Do all the possible datalevin operations for the given form delta (save to all datalevin databases)"
-  [{::form/keys [delta] :as env}]
-  (let [schemas (schemas-for-delta env delta)
-        result (atom {:tempids {}})]
-    (doseq [schema schemas
-            :let [connection (-> env dlo/connections (get schema))
-                  {:keys [txn]} (delta->txn delta)]])))
+  "Save form delta to Datalevin databases.
+
+   Processes the delta and saves data to all relevant database schemas. This function
+   is designed to be testable independently of middleware context.
+
+   Arguments:
+   - env: map containing:
+     - ::attr/key->attribute - map of attribute keys to attribute definitions
+     - ::dlo/connections - map of schema name to Datalevin connection
+     - ::form/delta - the form delta to save
+
+   Returns a map with:
+   - :tempids - map of tempid -> real-id for any newly created entities
+
+   Throws ex-info if:
+   - Connection is missing for a schema
+   - Transaction fails
+   - Delta structure is invalid"
+  [{::attr/keys [key->attribute]
+    ::dlo/keys  [connections]
+    ::form/keys [params]
+    :as         env}]
+  (let [{::form/keys [delta]} params]
+    (if-not (seq delta)
+      ;; No delta, return empty tempids
+      {:tempids {}}
+      ;; Validate delta structure early
+      (do
+        (validate-delta! delta)
+        ;; Process delta and save to databases
+        (let [schemas (schemas-for-delta env delta)]
+          ;; Bind tempid mappings for consistent id generation across the transaction
+          (binding [*tempid-mappings* (atom {})]
+            (reduce
+             (fn [acc schema]
+               (validate-connection! connections schema)
+               (let [conn          (get connections schema)
+                     ;; Filter delta to only include attributes for this schema
+                     schema-delta  (into {}
+                                         (filter (fn [[[k _] _]]
+                                                   (let [attr (get key->attribute k)]
+                                                     (or (nil? attr)
+                                                         (= schema (::attr/schema attr))
+                                                         (nil? (::attr/schema attr))))))
+                                         delta)
+                     txn-data      (delta->txn schema-delta)
+                     _             (log/debug "Transacting to" schema ":" txn-data)
+                     tx-result     (when (seq txn-data)
+                                     (transact-with-error-handling! conn schema txn-data))
+                     tempid-map    (when tx-result
+                                     (tempid->result-id tx-result schema-delta))]
+                 (cond-> acc
+                   (seq tempid-map)
+                   (update :tempids merge tempid-map))))
+             {:tempids {}}
+             schemas)))))))
 
 ;; ================================================================================
 ;; Save Middleware
@@ -495,48 +544,27 @@
        (let [save-result (save-middleware env)
              delta       (::form/delta params)
              ;; Only proceed with save if the base handler didn't return an error
-             should-save? (not (false? (::form/complete? save-result)))
-             schemas     (schemas-for-delta env delta)]
+             should-save? (not (false? (::form/complete? save-result)))]
          (tap> {:from ::wrap-datalevin-save :env env :save-result save-result :delta delta
-                :should-save? should-save? :schemas schemas :props props :save-middleware (str save-middleware)})
+                :should-save? should-save? :props props :save-middleware (str save-middleware)})
          (if (and (seq delta) should-save?)
-           ;; Bind tempid mappings for consistent id generation
-           (binding [*tempid-mappings* (atom {})]
-             (let [result (reduce
-                           (fn [acc schema]
-                             (validate-connection! connections schema)
-                             (let [conn          (get connections schema)
-                                   schema-delta  (into {}
-                                                       (filter (fn [[[k _] _]]
-                                                                 (let [attr (get key->attribute k)]
-                                                                   (or (nil? attr)
-                                                                       (= schema (::attr/schema attr))
-                                                                       (nil? (::attr/schema attr))))))
-                                                       delta)
-                                   txn-data      (delta->txn schema-delta)
-                                   _             (log/debug "Transacting to" schema ":" txn-data)
-                                   tx-result     (when (seq txn-data)
-                                                   (transact-with-error-handling! conn schema txn-data))
-                                   tempid-map    (when tx-result
-                                                   (tempid->result-id tx-result schema-delta))]
-                               (cond-> acc
-                                 (seq tempid-map)
-                                 (update :tempids merge tempid-map))))
-                           save-result
-                           schemas)]
-               ;; Ensure :tempids and ::form/errors are always present
-               ;; This is required for RAD's EQL queries to work correctly
-               (cond-> result
-                 (not (contains? result :tempids))
-                 (assoc :tempids {})
-                 
-                 (not (contains? result ::form/errors))
-                 (assoc ::form/errors []))))
+           ;; Use save-form! to do the actual save
+           (let [save-env (assoc env ::form/delta delta)
+                 save-result-data (save-form! save-env)
+                 result (merge save-result save-result-data)]
+             ;; Ensure :tempids and ::form/errors are always present
+             ;; This is required for RAD's EQL queries to work correctly
+             (cond-> result
+               (not (contains? result :tempids))
+               (assoc :tempids {})
+
+               (not (contains? result ::form/errors))
+               (assoc ::form/errors [])))
            ;; No delta or should not save, but still ensure required keys are present
            (cond-> save-result
              (not (contains? save-result :tempids))
              (assoc :tempids {})
-             
+
              (not (contains? save-result ::form/errors))
              (assoc ::form/errors []))))))))
 
@@ -587,21 +615,21 @@
                    (cond-> delete-result
                      (not (contains? delete-result :tempids))
                      (assoc :tempids {})
-                     
+
                      (not (contains? delete-result ::form/errors))
                      (assoc ::form/errors [])))
                  ;; Entity not found, still return required keys
                  (cond-> delete-result
                    (not (contains? delete-result :tempids))
                    (assoc :tempids {})
-                   
+
                    (not (contains? delete-result ::form/errors))
                    (assoc ::form/errors [])))))
            ;; No params, still ensure required keys are present
            (cond-> delete-result
              (not (contains? delete-result :tempids))
              (assoc :tempids {})
-             
+
              (not (contains? delete-result ::form/errors))
              (assoc ::form/errors []))))))))
 
