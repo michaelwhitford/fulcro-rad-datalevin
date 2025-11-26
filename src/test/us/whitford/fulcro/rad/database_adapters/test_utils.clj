@@ -128,15 +128,7 @@
         (doseq [file (reverse (file-seq dir))]
           (.delete file))))))
 
-(defn seed-database!
-  "Seed a database with initial data.
 
-   Arguments:
-   - conn: Datalevin connection
-   - data: vector of entity maps to transact"
-  [conn data]
-  (when (seq data)
-    (d/transact! conn data)))
 
 (defn mock-resolver-env
   "Create a mock Pathom environment for testing resolvers.

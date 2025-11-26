@@ -9,7 +9,8 @@
    [datalevin.core :as d]
    [edn-query-language.core :as eql]
    [taoensso.timbre :as log]
-   [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]))
+   [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]
+   [us.whitford.fulcro.rad.database-adapters.datalevin.utilities :as util]))
 
 (def ^:private tempid-counter
   "Atomic counter for generating unique negative transaction IDs."
@@ -119,7 +120,7 @@
                        eid   (get-in tx-result [:tempids tx-id])
                        db    (:db-after tx-result)]
                    (when (and eid db)
-                     (let [real-id (id-attr (d/pull db [id-attr] eid))]
+                     (let [real-id (id-attr (util/pull db [id-attr] eid))]
                        [tempid real-id])))))
           tempid-entries)))
 
@@ -181,9 +182,11 @@
   ([]
    (fn [{::form/keys [params] :as pathom-env}]
      (let [save-result (save-form! pathom-env params)]
-       save-result)))
+       (tap> {:from ::wrap-datalevin-save :pathom-env pathom-env :save-results save-result})
+       (merge {:tempids {}} save-result))))
   ([handler]
    (fn [{::form/keys [params] :as pathom-env}]
      (let [save-result    (save-form! pathom-env params)
            handler-result (handler pathom-env)]
-       (deep-merge save-result handler-result)))))
+       (tap> {:from ::wrap-datalevin-save :pathom-env pathom-env :save-results save-result :handler-result handler-result})
+       (deep-merge {:tempids {}} save-result handler-result)))))

@@ -1,10 +1,10 @@
 (ns us.whitford.fulcro.rad.database-adapters.datalevin
   "Datalevin database adapter for Fulcro RAD.
-   
+
    This namespace provides the main public API by re-exporting functions
    from the modular sub-namespaces. Import this namespace and use its
    functions to work with the Datalevin adapter.
-   
+
    Main functions:
    - start-databases: Start database connections
    - stop-databases: Stop database connections
@@ -30,6 +30,7 @@
 (def stop-databases sd/stop-databases)
 (def start-database! sd/start-database!)
 (def stop-database! sd/stop-database!)
+(def seed-database! util/seed-database!)
 
 ;; Schema generation
 (def automatic-schema sd/automatic-schema)

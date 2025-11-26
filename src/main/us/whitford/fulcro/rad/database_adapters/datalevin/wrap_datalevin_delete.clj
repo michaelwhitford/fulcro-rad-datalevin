@@ -19,24 +19,31 @@
                {:keys [::attr/schema]} (key->attribute pk)
                conn  (-> env dlo/connections (get schema))]
     (do
-      (log/info "Deleting" ident)
+      (log/info "Deleting " ident)
       (let [db  (d/db conn)
             eid (ffirst (d/q '[:find ?e
                                :in $ ?attr ?id
                                :where [?e ?attr ?id]]
                              db pk id))]
-        (when eid
-          (d/transact! conn [[:db/retractEntity eid]]))
-        {}))
-    (log/warn "Datalevin adapter failed to delete" params)))
+        (if eid
+          (do
+            (d/transact! conn [[:db/retractEntity eid]])
+            {})
+          {})))
+    (do
+      (log/warn "Datalevin adapter failed to delete" params)
+      {})))
 
 (defn wrap-datalevin-delete
   "Form delete middleware to accomplish datalevin deletes."
-  ([handler]
-   (fn [{::form/keys [params] :as pathom-env}]
-     (let [local-result   (delete-entity! pathom-env params)
-           handler-result (handler pathom-env)]
-       (deep-merge handler-result local-result))))
   ([]
    (fn [{::form/keys [params] :as pathom-env}]
-     (delete-entity! pathom-env params))))
+     (let [delete-result (delete-entity! pathom-env params)]
+       (tap> {:from ::wrap-datalevin-delete :pathom-env pathom-env :delete-result delete-result})
+       (merge {:tempids {}} delete-result))))
+  ([handler]
+   (fn [{::form/keys [params] :as pathom-env}]
+     (let [delete-result   (delete-entity! pathom-env params)
+           handler-result (handler pathom-env)]
+       (tap> {:from ::wrap-datalevin-delete :pathom-env pathom-env :delete-result delete-result :handler-result handler-result})
+       (deep-merge {:tempids {}} delete-result handler-result)))))

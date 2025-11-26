@@ -24,3 +24,15 @@
    Convenience wrapper around datalevin.core/pull-many."
   [db pattern eids]
   (d/pull-many db pattern eids))
+
+(defn seed-database!
+  "Seed a database with initial data.
+
+   Arguments:
+   - conn: Datalevin connection
+   - data: vector of entity maps to transact
+
+   Returns the transaction result."
+  [conn data]
+  (when (seq data)
+    (d/transact! conn data)))

@@ -9,6 +9,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+#### Documentation Cleanup (2024-11-26)
+- **REMOVED**: All references to metrics functionality from documentation
+- The project never implemented metrics code, but documentation incorrectly claimed it did
+- Removed from README.adoc:
+  - "Built-in metrics and observability" feature bullet point
+  - Entire "Metrics and Observability" API section (`get-metrics`, `reset-metrics!`)
+- Removed from CHANGELOG.md:
+  - "Metrics and Observability (TASK-011)" section
+  - Mention of metrics recording in error handling section
+- This aligns documentation with actual implementation (no metrics code exists)
+
+### Fixed
+
+#### Removed Eclipse Collections Conversion (2024-11-26)
+- **FIX**: Removed unnecessary Eclipse Collections conversion that was causing data corruption
+- **FIX**: Delete middleware now returns `{:tempids {}}` to match RAD expectations
+- **BREAKING**: Removed `eclipse-collection->clojure` from public API
+- Root cause analysis showed that Eclipse Collections serialization was not actually an issue:
+  - Fulcro RAD form operations should return only `{:tempids {...}}`, not full transaction results
+  - Query results don't need conversion - Datalevin's Eclipse Collections are Transit-compatible in practice
+  - Previous conversion was corrupting data structures and database values
+- Changes aligned with Datomic adapter pattern:
+  - `save-form!` now returns only `{:tempids {...}}` map, not full transaction result
+  - `delete-entity!` now returns `{}`, not transaction result
+  - Both `wrap-datalevin-save` and `wrap-datalevin-delete` ensure `:tempids` key is present in result
+  - Query helpers (`q`, `pull`, `pull-many`) return raw Datalevin results
+  - `seed-database!` returns raw transaction result (not used in RAD operations)
+- Removed all Eclipse Collection conversion logic:
+  - Deleted `eclipse-collection?`, `convert-eclipse-collection`, and `eclipse-collection->clojure` functions
+  - Removed conversion calls from all query and transaction operations
+  - Simplified code and removed unnecessary `clojure.walk` dependency
+- Tests: 15 tests, 95 assertions, 0 failures ✅
+- Added comprehensive tempids tests to verify form operation contract:
+  - `save-middleware-returns-tempids` - Tests save operations always include `:tempids`
+  - `delete-middleware-returns-tempids` - Tests delete operations always include `:tempids`
+  - Tests cover both standalone middleware and middleware with handlers
+  - Tests verify new entities return tempid mappings
+  - Tests verify existing entity updates return empty tempids
+  - Tests verify deletes return empty tempids (even for non-existent entities)
+- **Migration**: If you were using `eclipse-collection->clojure` directly, remove those calls. Query and form operations now work without conversion.
+
+### Added
+
+#### All-IDs Resolvers (2024-11-26)
+- **FEATURE**: Re-added `all-ids-resolver` functionality that was removed during XTDB-style refactor
+- `generate-resolvers` now creates two types of resolvers for each entity:
+  - ID resolver: resolves entity data by ID (e.g., `:account/id` -> account data)
+  - All-IDs resolver: resolves all entity IDs (e.g., `:all-accounts` -> `[{:account/id ...} ...]`)
+- Example usage:
+  ```clojure
+  ;; Query for a specific account by ID
+  [{:account/id some-uuid} [:account/name :account/email]]
+  
+  ;; Query for all account IDs
+  [:account/all-accounts]  ;; Returns [{:account/id uuid-1} {:account/id uuid-2} ...]
+  ```
+- Naming convention: `:entity/all-entitys` (e.g., `:account/all-accounts`, `:item/all-items`)
+- Tests: 13 tests, 76 assertions, 0 failures ✅
+
+### Changed
+
 #### Code Deduplication (2024-11-25)
 - **Removed duplicate test utilities**: Consolidated test database helpers into `test_utils.clj`
   - Removed from `utilities.clj`: `empty-db-connection`, `create-temp-database!`, `with-temp-database`, `seed-database!`, `mock-resolver-env`
@@ -125,7 +186,6 @@ First beta release of fulcro-rad-datalevin, a Datalevin database adapter for Ful
 #### Error Handling (TASK-001)
 - Transaction operations now include proper error handling with context
 - Errors include schema name and transaction count for debugging
-- Metrics are recorded for all transactions (success and failure)
 
 #### Connection Validation (TASK-002)
 - Missing database connections now throw informative exceptions instead of silently failing
@@ -165,16 +225,6 @@ First beta release of fulcro-rad-datalevin, a Datalevin database adapter for Ful
 - Pathom plugin now takes snapshots at request root level
 - All resolvers in a single request see consistent database state
 - Prevents inconsistent reads during concurrent writes
-
-#### Metrics and Observability (TASK-011)
-- New `metrics` atom tracks database operations
-- `get-metrics` function returns current metrics
-- `reset-metrics!` function for testing
-- Metrics include:
-  - Transaction count
-  - Transaction errors
-  - Total transaction time (milliseconds)
-  - Query count
 
 #### Configuration Options
 - New `::dlo/transaction-timeout-ms` option key

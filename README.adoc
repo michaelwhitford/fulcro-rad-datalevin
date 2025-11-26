@@ -10,7 +10,6 @@ A database adapter plugin for https://fulcro.fulcrologic.com/[Fulcro RAD] that p
 * Support for all RAD attribute types
 * Connection and database management utilities
 * Testing utilities with automatic cleanup (`with-temp-database` macro)
-* Built-in metrics and observability (transaction counts, timing, errors)
 * Production-ready error handling with detailed context
 * Configurable safety limits (batch sizes, timeouts, retries)
 * Input validation with helpful error messages
@@ -311,26 +310,6 @@ Or use a local checkout:
 ----
 (dl/get-by-ids db :account/id [id1 id2] [:account/name :account/email])
 ;; => {id1 {:account/name "Alice" ...} id2 {...}}
-----
-
-=== Metrics and Observability
-
-`get-metrics`:: Get current database operation metrics
-+
-[source,clojure]
-----
-(dl/get-metrics)
-;; => {:transaction-count 42
-;;     :transaction-errors 0
-;;     :query-count 100
-;;     :total-transaction-time-ms 1234}
-----
-
-`reset-metrics!`:: Reset all metrics to zero
-+
-[source,clojure]
-----
-(dl/reset-metrics!)
 ----
 
 === Dynamic Configuration

@@ -133,7 +133,39 @@
       (is (contains? (set outputs) :account/name))
       (is (contains? (set outputs) :account/email))
       (is (contains? (set outputs) :account/active?))
-      (is (contains? (set outputs) :account/balance)))))
+      (is (contains? (set outputs) :account/balance))))
+
+  (testing "generates all-ids resolvers"
+    (let [resolvers     (dl/generate-resolvers tu/all-test-attributes :test)
+          ;; Check if we have the right number of resolvers
+          ;; Should have 2 id-resolvers + 2 all-ids-resolvers = 4 total
+          ]
+      (is (= 4 (count resolvers)) "Should have 2 id-resolvers and 2 all-ids-resolvers")))
+
+  (testing "all-ids resolver returns entity IDs"
+    (tu/with-test-conn [conn]
+      (let [id1       (new-uuid)
+            id2       (new-uuid)
+            _         (d/transact! conn [{:account/id id1 :account/name "Account 1"}
+                                         {:account/id id2 :account/name "Account 2"}])
+            resolvers (dl/generate-resolvers tu/all-test-attributes :test)
+            ;; Find resolver by checking if output is a vector (all-ids resolvers have vector output)
+            ;; and contains the :account/all-accounts key
+            all-accts (first (filter #(let [output (::pco/output (:config %))]
+                                        (and (vector? output)
+                                             (map? (first output))
+                                             (contains? (first output) :account/all-accounts)))
+                                     resolvers))]
+        (is (some? all-accts) "Should find all-accounts resolver")
+        (when all-accts
+          (let [env    (assoc (tu/mock-resolver-env {:test conn})
+                              ::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes))
+                result ((:resolve all-accts) env {})]
+            (is (some? result))
+            (is (contains? result :account/all-accounts))
+            (is (= 2 (count (:account/all-accounts result))))
+            (is (every? #(contains? % :account/id) (:account/all-accounts result)))
+            (is (= (set [id1 id2]) (set (map :account/id (:account/all-accounts result)))))))))))
 
 ;; ================================================================================
 ;; Query Utility Tests
@@ -289,6 +321,103 @@
         (is (nil? (:account/email entity)))))))
 
 ;; ================================================================================
+;; Tempids Tests (CRITICAL - Fulcro RAD requires :tempids in all form operation results)
+;; ================================================================================
+
+(deftest save-middleware-returns-tempids
+  (testing "save with new entity returns tempids mapping"
+    (tu/with-test-conn [conn]
+      (let [tid        (tempid/tempid)
+            real-id    (new-uuid)
+            delta      {[:account/id tid] {:account/id {:before nil :after real-id}
+                                           :account/name {:before nil :after "Test"}}}
+            env        {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
+                        ::dlo/connections     {:test conn}
+                        ::form/params         {::form/delta delta}}
+            middleware (dl/wrap-datalevin-save)
+            result     (middleware env)]
+
+        (is (contains? result :tempids) "Result must contain :tempids key")
+        (is (map? (:tempids result)) ":tempids must be a map")
+        (is (= real-id (get (:tempids result) tid)) "Tempid should map to real ID"))))
+
+  (testing "save with existing entity returns empty tempids map"
+    (tu/with-test-conn [conn]
+      (let [real-id    (new-uuid)
+            _          (d/transact! conn [{:account/id real-id :account/name "Original"}])
+            delta      {[:account/id real-id] {:account/name {:before "Original" :after "Updated"}}}
+            env        {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
+                        ::dlo/connections     {:test conn}
+                        ::form/params         {::form/delta delta}}
+            middleware (dl/wrap-datalevin-save)
+            result     (middleware env)]
+
+        (is (contains? result :tempids) "Result must contain :tempids key")
+        (is (map? (:tempids result)) ":tempids must be a map")
+        (is (empty? (:tempids result)) "No tempids for existing entity updates"))))
+
+  (testing "save with handler preserves tempids"
+    (tu/with-test-conn [conn]
+      (let [tid        (tempid/tempid)
+            real-id    (new-uuid)
+            delta      {[:account/id tid] {:account/id {:before nil :after real-id}
+                                           :account/name {:before nil :after "Test"}}}
+            env        {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
+                        ::dlo/connections     {:test conn}
+                        ::form/params         {::form/delta delta}}
+            base-handler (fn [_] {:extra-data true})
+            middleware (dl/wrap-datalevin-save base-handler)
+            result     (middleware env)]
+
+        (is (contains? result :tempids) "Result must contain :tempids key")
+        (is (map? (:tempids result)) ":tempids must be a map")
+        (is (= real-id (get (:tempids result) tid)) "Tempid should map to real ID")
+        (is (true? (:extra-data result)) "Handler data should be merged")))))
+
+(deftest delete-middleware-returns-tempids
+  (testing "delete returns empty tempids map"
+    (tu/with-test-conn [conn]
+      (let [real-id    (new-uuid)
+            _          (d/transact! conn [{:account/id real-id :account/name "ToDelete"}])
+            env        {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
+                        ::dlo/connections     {:test conn}
+                        ::form/params         {:account/id real-id}}
+            middleware (dl/wrap-datalevin-delete)
+            result     (middleware env)]
+
+        (is (contains? result :tempids) "Result must contain :tempids key")
+        (is (map? (:tempids result)) ":tempids must be a map")
+        (is (empty? (:tempids result)) "Delete should return empty tempids map"))))
+
+  (testing "delete with handler preserves tempids"
+    (tu/with-test-conn [conn]
+      (let [real-id    (new-uuid)
+            _          (d/transact! conn [{:account/id real-id :account/name "ToDelete"}])
+            env        {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
+                        ::dlo/connections     {:test conn}
+                        ::form/params         {:account/id real-id}}
+            base-handler (fn [_] {:extra-data true})
+            middleware (dl/wrap-datalevin-delete base-handler)
+            result     (middleware env)]
+
+        (is (contains? result :tempids) "Result must contain :tempids key")
+        (is (map? (:tempids result)) ":tempids must be a map")
+        (is (empty? (:tempids result)) "Delete should return empty tempids map")
+        (is (true? (:extra-data result)) "Handler data should be merged"))))
+
+  (testing "delete of non-existent entity returns tempids"
+    (tu/with-test-conn [conn]
+      (let [fake-id    (new-uuid)
+            env        {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
+                        ::dlo/connections     {:test conn}
+                        ::form/params         {:account/id fake-id}}
+            middleware (dl/wrap-datalevin-delete)
+            result     (middleware env)]
+
+        (is (contains? result :tempids) "Result must contain :tempids key even for failed deletes")
+        (is (map? (:tempids result)) ":tempids must be a map")))))
+
+;; ================================================================================
 ;; Delete Middleware Tests
 ;; ================================================================================
 
@@ -333,14 +462,14 @@
             id2  (new-uuid)
             data [{:account/id id1 :account/name "Seed 1"}
                   {:account/id id2 :account/name "Seed 2"}]]
-        (tu/seed-database! conn data)
+        (dl/seed-database! conn data)
         (let [db    (d/db conn)
               count (ffirst (dl/q '[:find (count ?e) :where [?e :account/id]] db))]
           (is (= 2 count))))))
 
   (testing "handles empty seed data"
     (tu/with-test-conn [conn]
-      (tu/seed-database! conn [])
+      (dl/seed-database! conn [])
       (let [db    (d/db conn)
             count (dl/q '[:find ?e :where [?e :account/id]] db)]
         (is (empty? count))))))

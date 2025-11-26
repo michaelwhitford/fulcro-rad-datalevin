@@ -1,6 +1,9 @@
 # Agent Guidelines for fulcro-rad-datalevin
 
-Create documents as needed. Use a single PLAN.md for planning. Use a single CHANGELOG.md for changes. Avoid making extra summary files. Ask the user clarifying questions where appropriate.
+Use a single PLAN.md for planning. Use a single CHANGELOG.md for changes.
+Ask the user clarifying questions where appropriate before making large changes.
+This database adapter project is checked out at /Users/mwhitford/src/fulcro-rad-datalevin
+A working test application is checked out at /Users/mwhitford/src/datalevin-test-app
 
 ## Build & Test Commands
 
