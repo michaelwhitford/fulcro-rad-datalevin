@@ -62,24 +62,60 @@
    ::attr/target        :item/id
    ::attr/identities    #{:account/id}})
 
+(def account-role
+  {::attr/qualified-key       :account/role
+   ::attr/type                :enum
+   ::attr/schema              :test
+   ::attr/identities          #{:account/id}
+   ::attr/enumerated-values   #{:admin :user :guest}
+   ::attr/enumerated-labels   {:admin "Administrator"
+                               :user  "Regular User"
+                               :guest "Guest User"}})
+
+(def account-status
+  {::attr/qualified-key       :account/status
+   ::attr/type                :enum
+   ::attr/schema              :test
+   ::attr/identities          #{:account/id}
+   ::attr/enumerated-values   #{:status/active :status/inactive :status/pending}})
+
+(def account-permissions
+  {::attr/qualified-key       :account/permissions
+   ::attr/type                :enum
+   ::attr/schema              :test
+   ::attr/cardinality         :many
+   ::attr/identities          #{:account/id}
+   ::attr/enumerated-values   #{:read :write :execute}})
+
 (def all-test-attributes
   [account-id account-name account-email account-active account-balance
-   item-id item-name account-items])
+   item-id item-name account-items
+   account-role account-status account-permissions])
 
 ;; ================================================================================
 ;; Helper Functions
 ;; ================================================================================
 
 (defn create-test-conn
-  "Create a test connection with schema."
+  "Create a test connection with schema and enum values."
   ([]
    (create-test-conn all-test-attributes))
   ([attributes]
    ;; Infer schema name from the first attribute's schema, default to :test
    (let [schema-name (or (::attr/schema (first attributes)) :test)
          path (str "/tmp/datalevin-test-" (new-uuid))
-         schema (dl/automatic-schema schema-name attributes)]
-     {:conn (d/get-conn path schema)
+         schema (dl/automatic-schema schema-name attributes)
+         conn (d/get-conn path schema)
+         ;; Transact enum idents
+         enum-txn (#'us.whitford.fulcro.rad.database-adapters.datalevin.start-databases/enumerated-values
+                   (filter #(= schema-name (::attr/schema %)) attributes))]
+     (when (seq enum-txn)
+       (try
+         (d/transact! conn enum-txn)
+         (catch Exception e
+           ;; Ignore if enums already exist
+           nil)))
+     {:conn conn
       :path path})))
 
 (defn cleanup-test-conn

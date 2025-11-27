@@ -15,6 +15,7 @@
   "Map from RAD attribute types to Datalevin value types"
   {:string   :db.type/string
    :password :db.type/string
+   :enum     :db.type/ref
    :boolean  :db.type/boolean
    :int      :db.type/long
    :long     :db.type/long
@@ -54,6 +55,37 @@
                            (assoc :db/valueType :db.type/ref))]
       (when (seq base-schema)
         [qualified-key (merge base-schema attribute-schema)]))))
+
+(defn- enumerated-values
+  "Generate schema entries for enumerated values.
+   
+   For each enum attribute, creates entities with :db/ident for each enumerated value.
+   If enum values are not qualified keywords, auto-generates namespace from the attribute.
+   
+   Example:
+     Attribute :account/role with values #{:admin :user}
+     Generates: {:db/ident :account/role.admin} {:db/ident :account/role.user}
+   
+   Arguments:
+   - attributes: collection of RAD attribute maps
+   
+   Returns: sequence of maps with :db/ident for each enum value"
+  [attributes]
+  (mapcat
+   (fn [{::attr/keys [qualified-key type enumerated-values] :as a}]
+     (when (= :enum type)
+       (let [enum-nspc (str (namespace qualified-key) "." (name qualified-key))]
+         (keep (fn [v]
+                 (cond
+                   ;; Already a map (advanced usage)
+                   (map? v) v
+                   ;; Qualified keyword - use as-is
+                   (qualified-keyword? v) {:db/ident v}
+                   ;; Unqualified keyword - generate namespace
+                   :else (let [enum-ident (keyword enum-nspc (name v))]
+                           {:db/ident enum-ident})))
+               enumerated-values))))
+   attributes))
 
 (defn automatic-schema
   "Generate a Datalevin schema map from RAD attributes.
@@ -123,6 +155,16 @@
         conn             (if (seq datalevin-schema)
                            (d/get-conn path datalevin-schema)
                            (d/get-conn path))]
+    ;; Transact enum idents if we have any
+    (when auto-schema?
+      (let [relevant-attrs (filter #(= schema (::attr/schema %)) attributes)
+            enum-txn       (enumerated-values relevant-attrs)]
+        (when (seq enum-txn)
+          (try
+            (d/transact! conn enum-txn)
+            (log/debug "Transacted enumerated values for schema" schema)
+            (catch Exception e
+              (log/debug "Enumerated values may already exist:" (.getMessage e)))))))
     (log/info "Started Datalevin database at" path)
     conn))
 

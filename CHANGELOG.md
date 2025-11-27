@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+#### Enum Support (2024-11-27)
+- **FEATURE**: Full support for fulcro-rad's `:enum` attribute type
+- Enum attributes are stored as `:db.type/ref` in Datalevin (following Datomic pattern)
+- Enumerated values are stored as entities with `:db/ident`
+- Supports both qualified and unqualified keywords for enum values:
+  - Unqualified: `#{:admin :user}` → auto-generates `:account.role/admin`, `:account.role/user`
+  - Qualified: `#{:status/active :status/inactive}` → uses as-is
+- Supports both `:one` and `:many` cardinality for enum attributes
+- Enum values are automatically transacted when starting a database
+- Example usage:
+  ```clojure
+  (def account-role
+    {::attr/qualified-key      :account/role
+     ::attr/type               :enum
+     ::attr/schema             :production
+     ::attr/identities         #{:account/id}
+     ::attr/enumerated-values  #{:admin :user :guest}
+     ::attr/enumerated-labels  {:admin "Administrator"
+                                :user  "Regular User"
+                                :guest "Guest User"}})
+  ```
+- **Important**: When querying enum attributes with `d/pull`, use a pull pattern with `:db/ident`:
+  ```clojure
+  ;; For single-valued enum
+  (d/pull db [:account/id {:account/role [:db/ident]}] [:account/id id])
+  ;; Returns: {:account/id uuid :account/role {:db/ident :account.role/admin}}
+  
+  ;; For many-valued enum
+  (d/pull db [:account/id {:account/permissions [:db/ident]}] [:account/id id])
+  ;; Returns: {:account/id uuid :account/permissions [{:db/ident :read} {:db/ident :write}]}
+  ```
+- Tests: 18 tests, 129 assertions, 0 failures ✅
+
 ### Changed
 
 #### Documentation Cleanup (2024-11-26)

@@ -57,8 +57,33 @@ Or use a local checkout:
    ;; Custom Datalevin schema override
    ::dlo/attribute-schema {:db/unique :db.unique/value}})
 
-(def attributes [id name email])
+;; Enum attributes
+(defattr role :account/role :enum
+  {::attr/schema             :main
+   ::attr/identities         #{:account/id}
+   ::attr/enumerated-values  #{:admin :user :guest}
+   ::attr/enumerated-labels  {:admin "Administrator"
+                              :user  "Regular User"
+                              :guest "Guest User"}})
+
+(defattr status :account/status :enum
+  {::attr/schema             :main
+   ::attr/identities         #{:account/id}
+   ;; Can use fully-qualified keywords
+   ::attr/enumerated-values  #{:status/active :status/inactive}})
+
+(defattr permissions :account/permissions :enum
+  {::attr/schema             :main
+   ::attr/identities         #{:account/id}
+   ::attr/cardinality        :many  ;; Multiple values allowed
+   ::attr/enumerated-values  #{:read :write :execute}})
+
+(def attributes [id name email role status permissions])
 ----
+
+NOTE: When querying enum attributes, use pull patterns with `:db/ident` to get the keyword value:
+`(d/pull db [:account/id {:account/role [:db/ident]}] [:account/id id])` returns
+`{:account/id uuid :account/role {:db/ident :account.role/admin}}`.
 
 === 2. Start Database Connection
 
@@ -396,6 +421,9 @@ RAD types are automatically mapped to Datalevin types:
 
 | `:uuid`
 | `:db.type/uuid`
+
+| `:enum`
+| `:db.type/ref`
 
 | `:ref`
 | `:db.type/ref`

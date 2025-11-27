@@ -521,3 +521,134 @@
         (is (= "Test Item" (:item/name (d/pull (d/db conn2) '[*] [:item/id item-id]))))
 
         (tu/cleanup-test-conn test-db2)))))
+
+;; ================================================================================
+;; Enum Support Tests
+;; ================================================================================
+
+(deftest enum-schema-generation
+  (testing "generates correct schema for enum attributes"
+    (let [schema (dl/automatic-schema :test tu/all-test-attributes)]
+      ;; Enum attributes should map to :db.type/ref
+      (is (= :db.type/ref (get-in schema [:account/role :db/valueType])))
+      (is (= :db.type/ref (get-in schema [:account/status :db/valueType])))
+      (is (= :db.type/ref (get-in schema [:account/permissions :db/valueType])))
+      
+      ;; Many cardinality should be preserved
+      (is (= :db.cardinality/many (get-in schema [:account/permissions :db/cardinality])))))
+
+  (testing "generates enum ident entities with unqualified keywords"
+    (let [enum-txn (#'us.whitford.fulcro.rad.database-adapters.datalevin.start-databases/enumerated-values
+                    [tu/account-role])]
+      (is (= 3 (count enum-txn)))
+      (is (contains? (set (map :db/ident enum-txn)) :account.role/admin))
+      (is (contains? (set (map :db/ident enum-txn)) :account.role/user))
+      (is (contains? (set (map :db/ident enum-txn)) :account.role/guest))))
+
+  (testing "generates enum ident entities with qualified keywords"
+    (let [enum-txn (#'us.whitford.fulcro.rad.database-adapters.datalevin.start-databases/enumerated-values
+                    [tu/account-status])]
+      (is (= 3 (count enum-txn)))
+      (is (contains? (set (map :db/ident enum-txn)) :status/active))
+      (is (contains? (set (map :db/ident enum-txn)) :status/inactive))
+      (is (contains? (set (map :db/ident enum-txn)) :status/pending)))))
+
+(deftest enum-save-and-query
+  (testing "saves and queries enum values with unqualified keywords"
+    (tu/with-test-conn [conn]
+      (let [id    (new-uuid)
+            _     (d/transact! conn [{:account/id   id
+                                      :account/name "Alice"
+                                      :account/role :account.role/admin}])
+            result (d/pull (d/db conn) [:account/id :account/name {:account/role [:db/ident]}] [:account/id id])
+            role   (get-in result [:account/role :db/ident])]
+        (is (= id (:account/id result)))
+        (is (= "Alice" (:account/name result)))
+        (is (= :account.role/admin role)))))
+
+  (testing "saves and queries enum values with qualified keywords"
+    (tu/with-test-conn [conn]
+      (let [id    (new-uuid)
+            _     (d/transact! conn [{:account/id     id
+                                      :account/name   "Bob"
+                                      :account/status :status/active}])
+            result (d/pull (d/db conn) [:account/id :account/name {:account/status [:db/ident]}] [:account/id id])
+            status (get-in result [:account/status :db/ident])]
+        (is (= id (:account/id result)))
+        (is (= "Bob" (:account/name result)))
+        (is (= :status/active status)))))
+
+  (testing "saves and queries enum values with many cardinality"
+    (tu/with-test-conn [conn]
+      (let [id    (new-uuid)
+            _     (d/transact! conn [{:account/id          id
+                                      :account/name        "Charlie"
+                                      :account/permissions [:account.permissions/read
+                                                            :account.permissions/write]}])
+            result (d/pull (d/db conn) [:account/id :account/name {:account/permissions [:db/ident]}] [:account/id id])
+            perms  (set (map :db/ident (:account/permissions result)))]
+        (is (= id (:account/id result)))
+        (is (= "Charlie" (:account/name result)))
+        (is (= 2 (count perms)))
+        (is (contains? perms :account.permissions/read))
+        (is (contains? perms :account.permissions/write))))))
+
+(deftest enum-delta-save
+  (testing "saves enum via delta with unqualified keywords"
+    (tu/with-test-conn [conn]
+      (let [id      (new-uuid)
+            delta   {[:account/id id] {:account/id {:before nil :after id}
+                                       :account/name {:before nil :after "Dave"}
+                                       :account/role {:before nil :after :account.role/user}}}
+            env     {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
+                     ::dlo/connections     {:test conn}
+                     ::form/params         {::form/delta delta}}
+            middleware (dl/wrap-datalevin-save)
+            _       (middleware env)
+            result  (d/pull (d/db conn) [:account/id :account/name {:account/role [:db/ident]}] [:account/id id])
+            role   (get-in result [:account/role :db/ident])]
+        (is (= id (:account/id result)))
+        (is (= "Dave" (:account/name result)))
+        (is (= :account.role/user role)))))
+
+  (testing "updates enum values via delta"
+    (tu/with-test-conn [conn]
+      (let [id      (new-uuid)
+            ;; Create with admin role
+            _       (d/transact! conn [{:account/id id
+                                        :account/name "Eve"
+                                        :account/role :account.role/admin}])
+            ;; Update to user role via delta
+            delta   {[:account/id id] {:account/role {:before :account.role/admin
+                                                      :after :account.role/user}}}
+            env     {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
+                     ::dlo/connections     {:test conn}
+                     ::form/params         {::form/delta delta}}
+            middleware (dl/wrap-datalevin-save)
+            _       (middleware env)
+            result  (d/pull (d/db conn) [:account/id :account/name {:account/role [:db/ident]}] [:account/id id])
+            role    (get-in result [:account/role :db/ident])]
+        (is (= id (:account/id result)))
+        (is (= "Eve" (:account/name result)))
+        (is (= :account.role/user role)))))
+
+  (testing "saves many-cardinality enums via delta"
+    (tu/with-test-conn [conn]
+      (let [id      (new-uuid)
+            delta   {[:account/id id] {:account/id {:before nil :after id}
+                                       :account/name {:before nil :after "Frank"}
+                                       :account/permissions {:before nil
+                                                             :after [:account.permissions/read
+                                                                     :account.permissions/execute]}}}
+            env     {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
+                     ::dlo/connections     {:test conn}
+                     ::form/params         {::form/delta delta}}
+            middleware (dl/wrap-datalevin-save)
+            _       (middleware env)
+            result  (d/pull (d/db conn) [:account/id :account/name {:account/permissions [:db/ident]}] [:account/id id])
+            perms   (set (map :db/ident (:account/permissions result)))]
+        (is (= id (:account/id result)))
+        (is (= "Frank" (:account/name result)))
+        (is (= 2 (count perms)))
+        (is (contains? perms :account.permissions/read))
+        (is (contains? perms :account.permissions/execute))))))
