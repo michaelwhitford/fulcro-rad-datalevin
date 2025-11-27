@@ -53,12 +53,32 @@
   gr/generate-resolvers)
 (def get-by-ids gr/get-by-ids)
 
+;; Native ID helpers
+(def native-id?
+  "Returns true if the given attribute uses native :db/id."
+  gr/native-id?)
+(def pathom-query->datalevin-query
+  "Convert a Pathom EQL query to a Datalevin pull pattern.
+   Replaces native-id identity attributes with :db/id."
+  gr/pathom-query->datalevin-query)
+(def datalevin-result->pathom-result
+  "Convert Datalevin result with :db/id to Pathom result with proper ID key."
+  gr/datalevin-result->pathom-result)
+
 ;; Form middleware
 (def wrap-datalevin-save wds/wrap-datalevin-save)
 (def wrap-datalevin-delete wdd/wrap-datalevin-delete)
 
 ;; Form utilities - Delta processing
-(def delta->txn wds/delta->txn)
+(def delta->txn
+  "Convert RAD form delta to Datalevin transaction data.
+   
+   Arguments:
+   - env: environment map with ::attr/key->attribute
+   - delta: RAD form delta map
+   
+   Returns vector of Datalevin transaction operations."
+  wds/delta->txn)
 (def keys-in-delta wds/keys-in-delta)
 (def schemas-for-delta wds/schemas-for-delta)
 (def save-form! wds/save-form!)

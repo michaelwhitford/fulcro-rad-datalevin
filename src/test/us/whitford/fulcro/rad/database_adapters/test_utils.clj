@@ -93,6 +93,40 @@
    account-role account-status account-permissions])
 
 ;; ================================================================================
+;; Native ID Test Attributes
+;; ================================================================================
+
+(def person-id
+  "A native ID attribute - uses :db/id directly instead of a domain-specific key."
+  {::attr/qualified-key :person/id
+   ::attr/type          :long
+   ::attr/schema        :native-test
+   ::attr/identity?     true
+   ::dlo/native-id?     true})
+
+(def person-name
+  {::attr/qualified-key :person/name
+   ::attr/type          :string
+   ::attr/schema        :native-test
+   ::attr/identities    #{:person/id}})
+
+(def person-email
+  {::attr/qualified-key :person/email
+   ::attr/type          :string
+   ::attr/schema        :native-test
+   ::attr/identities    #{:person/id}})
+
+(def person-age
+  {::attr/qualified-key :person/age
+   ::attr/type          :long
+   ::attr/schema        :native-test
+   ::attr/identities    #{:person/id}})
+
+(def native-id-attributes
+  "Attributes for testing native-id functionality."
+  [person-id person-name person-email person-age])
+
+;; ================================================================================
 ;; Helper Functions
 ;; ================================================================================
 

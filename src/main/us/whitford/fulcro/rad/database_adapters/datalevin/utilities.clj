@@ -1,6 +1,7 @@
 (ns us.whitford.fulcro.rad.database-adapters.datalevin.utilities
   "Utility functions for Datalevin adapter - query helpers."
   (:require
+   [com.fulcrologic.guardrails.core :refer [>defn =>]]
    [datalevin.core :as d]))
 
 ;; ================================================================================

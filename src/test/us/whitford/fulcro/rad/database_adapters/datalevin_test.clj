@@ -75,43 +75,44 @@
 ;; ================================================================================
 
 (deftest delta-to-transaction-conversion
-  (testing "converts simple delta to transaction"
-    (let [id    (new-uuid)
-          delta {[:account/id id] {:account/name {:before nil :after "Alice"}
-                                   :account/email {:before nil :after "alice@test.com"}}}
-          txn   (dl/delta->txn delta)]
-      (is (= 1 (count txn)))
-      (is (= {:db/id [:account/id id]
-              :account/name "Alice"
-              :account/email "alice@test.com"}
-             (first txn)))))
+  (let [env {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)}]
+    (testing "converts simple delta to transaction"
+      (let [id    (new-uuid)
+            delta {[:account/id id] {:account/name {:before nil :after "Alice"}
+                                     :account/email {:before nil :after "alice@test.com"}}}
+            txn   (dl/delta->txn env delta)]
+        (is (= 1 (count txn)))
+        (is (= {:db/id [:account/id id]
+                :account/name "Alice"
+                :account/email "alice@test.com"}
+               (first txn)))))
 
-  (testing "handles tempids correctly"
-    (let [tid       (tempid/tempid)
-          real-uuid (new-uuid)
-          delta     {[:account/id tid] {:account/id {:before nil :after real-uuid}
-                                        :account/name {:before nil :after "Bob"}}}
-          txn       (dl/delta->txn delta)]
-      (is (= 1 (count txn)))
-      (let [entry (first txn)]
-        (is (number? (:db/id entry)))
-        (is (neg? (:db/id entry)))
-        (is (= real-uuid (:account/id entry)) "Must use real UUID from delta :after, not TempId")
-        (is (= "Bob" (:account/name entry))))))
+    (testing "handles tempids correctly"
+      (let [tid       (tempid/tempid)
+            real-uuid (new-uuid)
+            delta     {[:account/id tid] {:account/id {:before nil :after real-uuid}
+                                          :account/name {:before nil :after "Bob"}}}
+            txn       (dl/delta->txn env delta)]
+        (is (= 1 (count txn)))
+        (let [entry (first txn)]
+          (is (number? (:db/id entry)))
+          (is (neg? (:db/id entry)))
+          (is (= real-uuid (:account/id entry)) "Must use real UUID from delta :after, not TempId")
+          (is (= "Bob" (:account/name entry))))))
 
-  (testing "handles value removal"
-    (let [id    (new-uuid)
-          delta {[:account/id id] {:account/email {:before "old@test.com" :after nil}}}
-          txn   (dl/delta->txn delta)]
-      (is (= 1 (count txn)))
-      (is (vector? (first txn)))
-      (is (= :db/retract (first (first txn))))))
+    (testing "handles value removal"
+      (let [id    (new-uuid)
+            delta {[:account/id id] {:account/email {:before "old@test.com" :after nil}}}
+            txn   (dl/delta->txn env delta)]
+        (is (= 1 (count txn)))
+        (is (vector? (first txn)))
+        (is (= :db/retract (first (first txn))))))
 
-  (testing "ignores unchanged values"
-    (let [id    (new-uuid)
-          delta {[:account/id id] {:account/name {:before "Same" :after "Same"}}}
-          txn   (dl/delta->txn delta)]
-      (is (empty? txn)))))
+    (testing "ignores unchanged values"
+      (let [id    (new-uuid)
+            delta {[:account/id id] {:account/name {:before "Same" :after "Same"}}}
+            txn   (dl/delta->txn env delta)]
+        (is (empty? txn))))))
 
 ;; ================================================================================
 ;; Resolver Generation Tests
@@ -652,3 +653,157 @@
         (is (= 2 (count perms)))
         (is (contains? perms :account.permissions/read))
         (is (contains? perms :account.permissions/execute))))))
+
+(deftest enum-resolver-returns-keywords
+  (testing "resolver returns enum values as keywords, not entity maps"
+    (tu/with-test-conn [conn]
+      (let [id        (new-uuid)
+            _         (d/transact! conn [{:account/id   id
+                                          :account/name "Grace"
+                                          :account/role :account.role/admin}])
+            resolvers (dl/generate-resolvers tu/all-test-attributes :test)
+            account-resolver (first (filter #(= :account/id (first (::pco/input (:config %))))
+                                            resolvers))
+            env       (assoc (tu/mock-resolver-env {:test conn})
+                             ::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes))
+            results   ((:resolve account-resolver) env [{:account/id id}])
+            result    (first results)]
+        (is (some? result) (str "Result should not be nil. Got results: " (pr-str results)))
+        (is (= id (:account/id result)) (str "Expected account/id to be " id " but got: " (pr-str result)))
+        (is (= "Grace" (:account/name result)))
+        ;; This should be a keyword, not a map like {:db/id 18}
+        (is (keyword? (:account/role result)) 
+            (str "account/role should be a keyword, but got: " (pr-str (:account/role result))))
+        (is (= :account.role/admin (:account/role result))))))
+
+  (testing "resolver returns many-cardinality enums as keywords"
+    (tu/with-test-conn [conn]
+      (let [id        (new-uuid)
+            _         (d/transact! conn [{:account/id          id
+                                          :account/name        "Helen"
+                                          :account/permissions [:account.permissions/read
+                                                                :account.permissions/write]}])
+            resolvers (dl/generate-resolvers tu/all-test-attributes :test)
+            account-resolver (first (filter #(= :account/id (first (::pco/input (:config %))))
+                                            resolvers))
+            env       (assoc (tu/mock-resolver-env {:test conn})
+                             ::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes))
+            result    (first ((:resolve account-resolver) env [{:account/id id}]))
+            perms     (:account/permissions result)]
+        (is (some? result))
+        (is (= id (:account/id result)))
+        (is (= "Helen" (:account/name result)))
+        ;; All permissions should be keywords, not maps
+        (is (every? keyword? perms)
+            (str "account/permissions should be keywords, but got: " (pr-str perms)))
+        (is (= #{:account.permissions/read :account.permissions/write} (set perms)))))))
+
+;; ================================================================================
+;; Native ID Tests
+;; ================================================================================
+
+(deftest native-id-schema-generation
+  (testing "native-id attributes are skipped in schema generation"
+    (let [schema (dl/automatic-schema :native-test tu/native-id-attributes)]
+      ;; Native ID attribute should NOT be in the schema (uses built-in :db/id)
+      (is (not (contains? schema :person/id))
+          "Native ID attribute should not be in schema")
+      ;; Other attributes should be present
+      (is (contains? schema :person/name))
+      (is (contains? schema :person/email))
+      (is (contains? schema :person/age))))
+
+  (testing "native-id? helper identifies native-id attributes"
+    (is (true? (dl/native-id? tu/person-id)))
+    (is (false? (dl/native-id? tu/person-name)))
+    (is (false? (dl/native-id? tu/account-id)))))
+
+(deftest native-id-query-conversion
+  (testing "pathom-query->datalevin-query replaces native-id keys with :db/id"
+    (let [query [:person/id :person/name :person/email]
+          converted (dl/pathom-query->datalevin-query tu/native-id-attributes query)]
+      (is (= [:db/id :person/name :person/email] converted))))
+
+  (testing "pathom-query->datalevin-query leaves non-native keys unchanged"
+    (let [query [:account/id :account/name :account/email]
+          converted (dl/pathom-query->datalevin-query tu/all-test-attributes query)]
+      (is (= [:account/id :account/name :account/email] converted)))))
+
+(deftest native-id-save-and-query
+  (testing "saves and queries entities with native IDs"
+    (tu/with-test-conn-attrs [conn tu/native-id-attributes]
+      ;; Insert a person entity (Datalevin assigns :db/id)
+      (let [tx-result (d/transact! conn [{:person/name "Alice"
+                                          :person/email "alice@test.com"
+                                          :person/age 30}])
+            ;; Get the assigned entity ID from tx-result
+            db (:db-after tx-result)
+            ;; Query to find the entity
+            result (first (d/q '[:find ?e ?name
+                                 :where [?e :person/name ?name]]
+                               db))
+            eid (first result)]
+        (is (some? eid) "Entity should have been created")
+        (is (pos-int? eid) "Entity ID should be a positive integer")
+        
+        ;; Pull the entity
+        (let [pulled (d/pull db [:db/id :person/name :person/email :person/age] eid)]
+          (is (= "Alice" (:person/name pulled)))
+          (is (= "alice@test.com" (:person/email pulled)))
+          (is (= 30 (:person/age pulled)))
+          (is (= eid (:db/id pulled))))))))
+
+(deftest native-id-resolver-generation
+  (testing "generates resolvers for native-id entities"
+    (let [resolvers (dl/generate-resolvers tu/native-id-attributes :native-test)]
+      ;; Should have an ID resolver and an all-IDs resolver
+      (is (>= (count resolvers) 1) "Should generate at least one resolver")
+      ;; Find the ID resolver
+      (let [id-resolver (first (filter #(= :person/id (first (::pco/input (:config %))))
+                                       resolvers))]
+        (is (some? id-resolver) "Should have an ID resolver for :person/id"))))
+
+  (testing "resolver correctly maps :db/id back to identity key"
+    (tu/with-test-conn-attrs [conn tu/native-id-attributes]
+      ;; Insert a person
+      (let [tx-result (d/transact! conn [{:person/name "Bob"
+                                          :person/email "bob@test.com"
+                                          :person/age 25}])
+            db (:db-after tx-result)
+            ;; Find the entity ID
+            eid (ffirst (d/q '[:find ?e :where [?e :person/name "Bob"]] db))
+            ;; Generate resolvers and run query
+            resolvers (dl/generate-resolvers tu/native-id-attributes :native-test)
+            person-resolver (first (filter #(= :person/id (first (::pco/input (:config %))))
+                                           resolvers))
+            env (assoc (tu/mock-resolver-env {:native-test conn})
+                       ::attr/key->attribute (tu/key->attribute-map tu/native-id-attributes))
+            ;; Query using the native entity ID
+            result (first ((:resolve person-resolver) env [{:person/id eid}]))]
+        (is (some? result) "Resolver should return a result")
+        ;; The result should have :person/id mapped from :db/id
+        (is (= eid (:person/id result)) 
+            (str "person/id should be " eid " but got: " (pr-str result)))
+        (is (= "Bob" (:person/name result)))
+        (is (= "bob@test.com" (:person/email result)))))))
+
+(deftest native-id-delta-conversion
+  (testing "delta->txn handles native-id attributes correctly"
+    (let [env {::attr/key->attribute (tu/key->attribute-map tu/native-id-attributes)}
+          ;; Simulating an update to an existing entity with native ID (eid 42)
+          delta {[:person/id 42] {:person/name {:before "Old Name" :after "New Name"}
+                                  :person/age {:before 25 :after 26}}}
+          txn (dl/delta->txn env delta)]
+      ;; Should use the raw entity ID, not a lookup ref
+      (is (some? txn))
+      (is (= 1 (count txn)) "Should have one transaction entry")
+      (let [entry (first txn)]
+        (is (map? entry))
+        ;; The :db/id should be the raw entity ID (42), not [:person/id 42]
+        (is (= 42 (:db/id entry)) 
+            (str "Native ID should use raw entity ID, got: " (pr-str (:db/id entry))))
+        (is (= "New Name" (:person/name entry)))
+        (is (= 26 (:person/age entry)))
+        ;; Should NOT have :person/id in the entity map (it's :db/id)
+        (is (not (contains? entry :person/id))
+            "Native ID entities should not have the identity attribute in the map")))))

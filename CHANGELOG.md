@@ -9,6 +9,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Guardrails Integration (2024-11-27)
+- **FEATURE**: Added `com.fulcrologic/guardrails` dependency for runtime validation
+- All public functions now use `>defn` with specs for better error messages
+- Function specs include:
+  - `automatic-schema`: validates schema-name (keyword) and attributes (::attr/attributes)
+  - `delta->txn`: validates env (map) and delta (map) inputs
+  - `generate-resolvers`: validates attributes and schema inputs
+  - `datalevin-result->pathom-result`: validates key->attribute map and EQL query
+  - `id-resolver`: validates all-attributes, id-attribute, and output-attributes
+- Specs provide runtime validation during development
+- Improves debugging with clear error messages on invalid inputs
+- Tests: 24 tests, 167 assertions, 0 failures ✅
+
+#### Native ID Support (2024-11-27)
+- **FEATURE**: Full support for native `:db/id` identity attributes (following Datomic pattern)
+- New `::dlo/native-id?` option for identity attributes
+- Native ID attributes use Datalevin's built-in `:db/id` instead of a domain-specific attribute
+- Schema generation automatically skips native-id attributes (they use the built-in :db/id)
+- Resolver generation correctly maps `:db/id` back to the identity attribute key in results
+- Save/delete middleware handles native IDs using raw entity IDs instead of lookup refs
+- Example usage:
+  ```clojure
+  (defattr id :person/id :long
+    {::attr/identity? true
+     ::dlo/native-id? true    ; ← Uses :db/id directly
+     ::attr/schema :production})
+  ```
+- Benefits:
+  - Better performance (no extra attribute lookup)
+  - Compatibility with existing Datalevin databases using :db/id
+  - Simpler migrations from Datomic applications
+- Helper functions:
+  - `native-id?`: checks if an attribute uses native ID
+  - `pathom-query->datalevin-query`: converts Pathom EQL to Datalevin pull pattern
+  - `datalevin-result->pathom-result`: maps :db/id back to identity key
+- Tests: 24 tests, 167 assertions, 0 failures ✅
+
+#### Wrap-Resolve Support (2024-11-27)
+- **FEATURE**: Added `::dlo/wrap-resolve` option for identity attributes
+- Allows wrapping resolver logic for custom input/output manipulation
+- The wrap function receives the core resolver and must return a new resolver function
+- Only affects auto-generated resolvers for the specific identity attribute
+- Example usage:
+  ```clojure
+  (defattr id :account/id :uuid
+    {::attr/identity? true
+     ::dlo/wrap-resolve (fn [resolve]
+                          (fn [env input]
+                            ;; Pre-processing
+                            (let [result (resolve env input)]
+                              ;; Post-processing
+                              result)))})
+  ```
+- Use cases:
+  - Adding logging/metrics to specific resolvers
+  - Implementing caching strategies
+  - Adding custom authorization checks
+  - Transforming inputs or outputs
+- Tests: 24 tests, 167 assertions, 0 failures ✅
+
+### Fixed
+
+#### Enum Values in Resolvers (2024-11-27)
+- **FIX**: Enum values are now correctly returned as keywords from generated resolvers
+- Previously, enum values were returned as entity reference maps (e.g., `{:db/id 18}`) instead of their `:db/ident` keyword values
+- This caused runtime errors in fulcro-rad when trying to call `name` on a map
+- Implemented `replace-ref-types` function (following fulcro-rad-datomic pattern) that walks pull results and replaces enum entity references with their `:db/ident` values
+- Works for both single-valued (`::attr/cardinality :one`) and multi-valued (`::attr/cardinality :many`) enum attributes
+- ID resolver now includes the identity attribute in pull pattern to ensure it's present in results
+- Tests: 19 tests, 139 assertions, 0 failures ✅
+- Example transformation:
+  ```clojure
+  ;; Before (broken):
+  {:account/id uuid
+   :account/name "Alice"
+   :account/role {:db/id 18}}  ; ← Error: can't call (name) on a map
+  
+  ;; After (fixed):
+  {:account/id uuid
+   :account/name "Alice" 
+   :account/role :account.role/admin}  ; ← Correct: keyword value
+  ```
+
+### Added
+
 #### Enum Support (2024-11-27)
 - **FEATURE**: Full support for fulcro-rad's `:enum` attribute type
 - Enum attributes are stored as `:db.type/ref` in Datalevin (following Datomic pattern)

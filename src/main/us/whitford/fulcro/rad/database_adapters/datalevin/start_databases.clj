@@ -2,6 +2,7 @@
   "Database lifecycle management for Datalevin adapter."
   (:require
    [clojure.spec.alpha :as s]
+   [com.fulcrologic.guardrails.core :refer [>defn =>]]
    [com.fulcrologic.rad.attributes :as attr]
    [datalevin.core :as d]
    [taoensso.timbre :as log]
@@ -35,11 +36,12 @@
 
 (defn- attr->schema
   "Convert a single RAD attribute to Datalevin schema entry.
-   Returns a map entry [attr-key schema-map]."
+   Returns a map entry [attr-key schema-map], or nil for native-id attributes."
   [{::attr/keys [type qualified-key cardinality identity?]
-    ::dlo/keys  [attribute-schema]
+    ::dlo/keys  [attribute-schema native-id?]
     :as         attribute}]
-  (when type
+  ;; Skip native-id attributes - they use :db/id which is built-in
+  (when (and type (not native-id?))
     (let [datalevin-type (get type-map type)
           base-schema    (cond-> {}
                            datalevin-type
@@ -87,16 +89,21 @@
                enumerated-values))))
    attributes))
 
-(defn automatic-schema
+(>defn automatic-schema
   "Generate a Datalevin schema map from RAD attributes.
 
    Arguments:
    - schema-name: keyword identifying the schema (e.g., :production, :main)
    - attributes: collection of RAD attribute maps
+   
+   Attributes with `::dlo/native-id? true` are skipped since they use the built-in :db/id.
 
    Returns a map suitable for passing to datalevin's get-conn."
   [schema-name attributes]
+  [keyword? ::attr/attributes => map?]
   (let [relevant-attrs (filter #(= schema-name (::attr/schema %)) attributes)]
+    (when (empty? relevant-attrs)
+      (log/warn "Automatic schema requested for" schema-name "but no attributes found for this schema."))
     (into {}
           (comp
            (map attr->schema)

@@ -3,6 +3,7 @@
  :deps    {org.clojure/clojure        {:mvn/version "1.11.1"}
            com.fulcrologic/fulcro     {:mvn/version "3.8.6"}
            com.fulcrologic/fulcro-rad {:mvn/version "1.6.18"}
+           com.fulcrologic/guardrails {:mvn/version "1.2.9"}
            datalevin/datalevin        {:mvn/version "0.9.22"}
            com.wsscode/pathom3        {:mvn/version "2025.01.16-alpha"}
            edn-query-language/eql     {:mvn/version "2025.09.27"}
