@@ -270,34 +270,46 @@
 
    Returns a resolver that outputs all entity IDs for queries like :account/all.
 
-   For native-id attributes, queries :db/id and maps back to the qualified key.
+   For native-id attributes, finds entities by querying for any non-identity attribute
+   from the same entity type (e.g., for :person/id, looks for entities with :person/name).
 
    Example:
    - For :account/id, creates a resolver for :account/all
    - Query [:account/all] returns [{:account/id uuid-1} {:account/id uuid-2} ...]"
-  [{::attr/keys [qualified-key] :keys [::attr/schema] :as id-attribute}]
+  [all-attributes {::attr/keys [qualified-key] :keys [::attr/schema] :as id-attribute}]
   (let [entity-ns     (namespace qualified-key)
         all-ids-key   (keyword entity-ns "all")
-        is-native-id? (native-id? id-attribute)]
+        is-native-id? (native-id? id-attribute)
+        ;; Find a non-identity attribute from the same entity type
+        ;; Use this to query for entities of this type
+        sample-attr   (when is-native-id?
+                        (->> all-attributes
+                             (filter #(and (= schema (::attr/schema %))
+                                           (= entity-ns (namespace (::attr/qualified-key %)))
+                                           (not (::attr/identity? %))))
+                             first
+                             ::attr/qualified-key))]
     (log/info "Building all-ids resolver for" qualified-key "->" all-ids-key
-              (when is-native-id? "(native-id)"))
+              (when is-native-id? (str "(native-id, using " sample-attr " for query)")))
     (pco/resolver
      (symbol (str entity-ns "-all-resolver"))
      {::pco/output [{all-ids-key [qualified-key]}]}
      (fn [{::dlo/keys [databases] :as env} _input]
        (let [db (get databases schema)]
          (if is-native-id?
-           ;; For native IDs, we need to find all entities that have any attribute
-           ;; from this entity type. Use :db/id directly.
-           ;; This is a limitation - we can't easily enumerate all entities without
-           ;; knowing at least one attribute they have.
-           (let [result (util/q '[:find ?e
-                                  :where [?e _ _]]
-                                db)
-                 ;; Note: This gets ALL entities which may not be what we want
-                 ;; In practice, native-id entities should have at least one identifying attribute
-                 ids (mapv (fn [[eid]] {qualified-key eid}) result)]
-             {all-ids-key ids})
+           ;; For native IDs, find entities by querying for a non-identity attribute
+           ;; from the same entity type (e.g., :person/name for :person/id)
+           (if sample-attr
+             (let [result (util/q '[:find ?e
+                                    :in $ ?attr
+                                    :where [?e ?attr _]]
+                                  db sample-attr)
+                   ids (mapv (fn [[eid]] {qualified-key eid}) result)]
+               {all-ids-key ids})
+             (do
+               (log/warn "Cannot generate all-ids query for native-id" qualified-key
+                         "- no non-identity attributes found. Returning empty list.")
+               {all-ids-key []}))
            ;; For non-native IDs, query the ID attribute directly
            (let [result (util/q '[:find ?id
                                   :in $ ?id-attr
@@ -337,5 +349,5 @@
                           []
                           entity-id->attributes)
         ;; Generate all-IDs resolvers (all entities of a type)
-        all-ids-resolvers (mapv all-ids-resolver identity-attributes)]
+        all-ids-resolvers (mapv (partial all-ids-resolver attributes) identity-attributes)]
     (concat entity-resolvers all-ids-resolvers)))

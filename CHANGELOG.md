@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+#### Native-ID All-IDs Resolver (2024-11-27)
+- **FIX**: Native-ID all-ids resolver now correctly filters entities by type
+- Previously, the all-ids resolver for native-id attributes (e.g., `:person/id`) used the query `[:find ?e :where [?e _ _]]` which returned ALL entities in the database
+- This caused queries like `[:person/all]` to incorrectly return enums, other entity types, and all database entities instead of just person entities
+- Root cause: The generic `[?e _ _]` pattern matches any entity with any attribute
+- **Fix**: The resolver now finds a non-identity attribute from the same entity type (e.g., `:person/name` for `:person/id`) and queries for entities that have that specific attribute
+- This ensures only entities of the correct type are returned
+- If no non-identity attribute is found for an entity type, the resolver returns an empty list with a warning
+- Updated `all-ids-resolver` function signature to accept `all-attributes` parameter for finding sample attributes
+- Example transformation:
+  ```clojure
+  ;; Before (broken):
+  ;; Query: [:person/all]
+  ;; Returns: [{:person/id 1} {:person/id 2} ... {:person/id 47}]  ; All 47 entities including enums!
+  
+  ;; After (fixed):
+  ;; Query: [:person/all]
+  ;; Uses: [:find ?e :in $ ?attr :where [?e ?attr _]] with ?attr = :person/name
+  ;; Returns: [{:person/id 1} {:person/id 2}]  ; Only 2 actual person entities
+  ```
+- Added comprehensive test suite in `native_id_all_resolver_test.clj`:
+  - `native-id-all-resolver-excludes-other-entities` - verifies only correct entity type is returned
+  - `native-id-all-resolver-returns-full-data` - tests integration with id-resolver
+  - `native-id-all-resolver-with-no-attributes` - handles edge case of entity with only identity attribute
+  - `native-id-all-resolver-query-uses-correct-attribute` - validates sample attribute selection
+- Tests: 28 tests, 179 assertions, 0 failures ✅
+
 ### Added
 
 #### Guardrails Integration (2024-11-27)

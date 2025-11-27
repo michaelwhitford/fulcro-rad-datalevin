@@ -13,7 +13,7 @@ Based on detailed comparison with `fulcro-rad-datomic` and `fulcro-rad-xtdb` ada
 
 ### 1. Native ID Support (`native-id?`)
 **Source:** Datomic adapter  
-**Status:** Option defined but not implemented
+**Status:** ✅ COMPLETED (2024-11-27)
 
 The Datomic adapter supports `native-id?` option allowing attributes to map directly to `:db/id` instead of a domain-specific UUID. This is important for:
 - Performance (no extra attribute lookup)
@@ -21,15 +21,16 @@ The Datomic adapter supports `native-id?` option allowing attributes to map dire
 - Simpler migrations
 
 **Implementation:**
-- [ ] Implement `native-ident?` helper function
-- [ ] Update `failsafe-id` to handle native IDs
-- [ ] Update schema generation to skip native ID attributes
-- [ ] Update resolver generation to map `:db/id` back to identity key
-- [ ] Add tests for native ID entities
+- [x] Implement `native-ident?` helper function
+- [x] Update `failsafe-id` to handle native IDs
+- [x] Update schema generation to skip native ID attributes
+- [x] Update resolver generation to map `:db/id` back to identity key
+- [x] Add tests for native ID entities
+- [x] Fix all-ids-resolver to correctly filter by entity type (Bug fix 2024-11-27)
 
-**Files to modify:**
+**Files modified:**
 - `start_databases.clj` - schema generation
-- `generate_resolvers.clj` - ID mapping in results
+- `generate_resolvers.clj` - ID mapping in results, all-ids resolver fix
 - `wrap_datalevin_save.clj` - transaction ID handling
 
 ---
