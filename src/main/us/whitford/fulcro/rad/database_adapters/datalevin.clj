@@ -13,6 +13,7 @@
    - wrap-datalevin-save: Middleware for saving forms
    - wrap-datalevin-delete: Middleware for deleting entities
    - automatic-schema: Generate Datalevin schema from RAD attributes"
+  {:clj-kondo/config '{:linters {:unresolved-var {:level :off}}}}
   (:require
    [us.whitford.fulcro.rad.database-adapters.datalevin.generate-resolvers :as gr]
    [us.whitford.fulcro.rad.database-adapters.datalevin.pathom-plugin :as pp]
@@ -41,7 +42,15 @@
 (def wrap-env pp/wrap-env)
 
 ;; Resolver generation
-(def generate-resolvers gr/generate-resolvers)
+(def generate-resolvers
+  "Generate all of the resolvers that make sense for the given database config.
+   
+   Arguments:
+   - attributes: collection of RAD attributes
+   - schema: schema keyword (e.g., :main)
+   
+   Returns: sequence of Pathom3 resolvers"
+  gr/generate-resolvers)
 (def get-by-ids gr/get-by-ids)
 
 ;; Form middleware

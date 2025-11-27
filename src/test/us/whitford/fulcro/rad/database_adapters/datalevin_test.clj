@@ -150,11 +150,11 @@
                                          {:account/id id2 :account/name "Account 2"}])
             resolvers (dl/generate-resolvers tu/all-test-attributes :test)
             ;; Find resolver by checking if output is a vector (all-ids resolvers have vector output)
-            ;; and contains the :account/all-accounts key
+            ;; and contains the :account/all key
             all-accts (first (filter #(let [output (::pco/output (:config %))]
                                         (and (vector? output)
                                              (map? (first output))
-                                             (contains? (first output) :account/all-accounts)))
+                                             (contains? (first output) :account/all)))
                                      resolvers))]
         (is (some? all-accts) "Should find all-accounts resolver")
         (when all-accts
@@ -162,10 +162,10 @@
                               ::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes))
                 result ((:resolve all-accts) env {})]
             (is (some? result))
-            (is (contains? result :account/all-accounts))
-            (is (= 2 (count (:account/all-accounts result))))
-            (is (every? #(contains? % :account/id) (:account/all-accounts result)))
-            (is (= (set [id1 id2]) (set (map :account/id (:account/all-accounts result)))))))))))
+            (is (contains? result :account/all))
+            (is (= 2 (count (:account/all result))))
+            (is (every? #(contains? % :account/id) (:account/all result)))
+            (is (= (set [id1 id2]) (set (map :account/id (:account/all result)))))))))))
 
 ;; ================================================================================
 ;; Query Utility Tests

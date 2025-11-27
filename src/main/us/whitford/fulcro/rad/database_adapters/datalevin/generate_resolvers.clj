@@ -83,17 +83,17 @@
    Arguments:
    - id-attribute: The identity attribute (e.g., :account/id)
 
-   Returns a resolver that outputs all entity IDs for queries like :all-accounts.
+   Returns a resolver that outputs all entity IDs for queries like :account/all.
 
    Example:
-   - For :account/id, creates a resolver for :all-accounts
-   - Query [:all-accounts] returns [{:account/id uuid-1} {:account/id uuid-2} ...]"
+   - For :account/id, creates a resolver for :account/all
+   - Query [:account/all] returns [{:account/id uuid-1} {:account/id uuid-2} ...]"
   [{::attr/keys [qualified-key] :keys [::attr/schema] :as id-attribute}]
   (let [entity-ns   (namespace qualified-key)
-        all-ids-key (keyword entity-ns (str "all-" entity-ns "s"))]
+        all-ids-key (keyword entity-ns "all")]
     (log/info "Building all-ids resolver for" qualified-key "->" all-ids-key)
     (pco/resolver
-     (symbol (str (namespace all-ids-key) "." (name all-ids-key) "-resolver"))
+     (symbol (str entity-ns "-all-resolver"))
      {::pco/output [{all-ids-key [qualified-key]}]}
      (fn [{::dlo/keys [databases] :as env} _input]
        (let [db     (get databases schema)

@@ -7,25 +7,10 @@ A working test application is checked out at /Users/mwhitford/src/datalevin-test
 
 ## Build & Test Commands
 
-```bash
-# Run all tests
-clojure -M:run-tests
-
-# Run single test namespace
-clojure -M:run-tests --focus us.whitford.fulcro.rad.database-adapters.datalevin-core-test
-
-# Run single test
-clojure -M:run-tests --focus us.whitford.fulcro.rad.database-adapters.datalevin-core-test/test-name
-
-# Check outdated dependencies
-clojure -M:outdated
-```
-
-## Lint Command
-
-```bash
-clj-kondo --lint .
-```
+- **Run all tests**: `clojure -M:run-tests`
+- **Run single test**: `clojure -M:run-tests --focus us.whitford.fulcro.rad.database-adapters.datalevin-core-test`
+- **Check outdated deps**: `clojure -M:outdated`
+- **Lint command**: `clj-kondo --lint .`
 
 ## Code Style
 
