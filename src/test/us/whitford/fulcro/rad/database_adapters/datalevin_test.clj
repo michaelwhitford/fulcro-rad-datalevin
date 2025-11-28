@@ -594,13 +594,60 @@
         (is (contains? perms :account.permissions/read))
         (is (contains? perms :account.permissions/write))))))
 
+(deftest enum-value-conversion-in-delta
+  (testing "delta->txn converts unqualified enum values to db/ident format"
+    (let [env   {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)}
+          id    (new-uuid)
+          delta {[:account/id id] {:account/id {:before nil :after id}
+                                   :account/role {:before nil :after :admin}}}
+          txn   (dl/delta->txn env delta)]
+      (is (= 1 (count txn)))
+      ;; The :admin should be converted to :account.role/admin
+      (is (= :account.role/admin (:account/role (first txn)))
+          "Unqualified enum :admin should be converted to :account.role/admin")))
+
+  (testing "delta->txn preserves already-qualified enum values"
+    (let [env   {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)}
+          id    (new-uuid)
+          delta {[:account/id id] {:account/id {:before nil :after id}
+                                   :account/status {:before nil :after :status/active}}}
+          txn   (dl/delta->txn env delta)]
+      (is (= 1 (count txn)))
+      ;; :status/active should remain unchanged
+      (is (= :status/active (:account/status (first txn)))
+          "Already qualified enum :status/active should be unchanged")))
+
+  (testing "delta->txn converts set of unqualified enum values (cardinality many)"
+    (let [env   {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)}
+          id    (new-uuid)
+          delta {[:account/id id] {:account/id {:before nil :after id}
+                                   :account/permissions {:before nil :after #{:read :write}}}}
+          txn   (dl/delta->txn env delta)]
+      (is (= 1 (count txn)))
+      (let [perms (:account/permissions (first txn))]
+        (is (set? perms) "Permissions should remain a set")
+        (is (= #{:account.permissions/read :account.permissions/write} perms)
+            "Unqualified enums in set should be converted"))))
+
+  (testing "delta->txn handles retraction of enum values"
+    (let [env   {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)}
+          id    (new-uuid)
+          delta {[:account/id id] {:account/role {:before :admin :after nil}}}
+          txn   (dl/delta->txn env delta)]
+      (is (= 1 (count txn)))
+      ;; Should be a retraction with the converted value
+      (is (= [:db/retract [:account/id id] :account/role :account.role/admin]
+             (first txn))
+          "Retraction should use converted enum value"))))
+
 (deftest enum-delta-save
-  (testing "saves enum via delta with unqualified keywords"
+  (testing "saves enum via delta with unqualified keywords (raw values like :admin)"
     (tu/with-test-conn [conn]
       (let [id      (new-uuid)
+            ;; Using raw :admin instead of :account.role/admin - this is what comes from the form
             delta   {[:account/id id] {:account/id {:before nil :after id}
                                        :account/name {:before nil :after "Dave"}
-                                       :account/role {:before nil :after :account.role/user}}}
+                                       :account/role {:before nil :after :admin}}}
             env     {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
                      ::dlo/connections     {:test conn}
                      ::form/params         {::form/delta delta}}
@@ -610,7 +657,43 @@
             role   (get-in result [:account/role :db/ident])]
         (is (= id (:account/id result)))
         (is (= "Dave" (:account/name result)))
-        (is (= :account.role/user role)))))
+        (is (= :account.role/admin role) "Raw :admin should be saved as :account.role/admin"))))
+
+  (testing "saves enum via delta with already-qualified keywords"
+    (tu/with-test-conn [conn]
+      (let [id      (new-uuid)
+            delta   {[:account/id id] {:account/id {:before nil :after id}
+                                       :account/name {:before nil :after "Eve"}
+                                       :account/status {:before nil :after :status/active}}}
+            env     {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
+                     ::dlo/connections     {:test conn}
+                     ::form/params         {::form/delta delta}}
+            middleware (dl/wrap-datalevin-save)
+            _       (middleware env)
+            result  (d/pull (d/db conn) [:account/id :account/name {:account/status [:db/ident]}] [:account/id id])
+            status  (get-in result [:account/status :db/ident])]
+        (is (= id (:account/id result)))
+        (is (= "Eve" (:account/name result)))
+        (is (= :status/active status)))))
+
+  (testing "saves set of raw enum values (cardinality many)"
+    (tu/with-test-conn [conn]
+      (let [id      (new-uuid)
+            ;; Using raw values :read, :write instead of :account.permissions/read etc.
+            delta   {[:account/id id] {:account/id {:before nil :after id}
+                                       :account/name {:before nil :after "Frank"}
+                                       :account/permissions {:before nil :after #{:read :write}}}}
+            env     {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
+                     ::dlo/connections     {:test conn}
+                     ::form/params         {::form/delta delta}}
+            middleware (dl/wrap-datalevin-save)
+            _       (middleware env)
+            result  (d/pull (d/db conn) [:account/id :account/name {:account/permissions [:db/ident]}] [:account/id id])
+            perms   (set (map :db/ident (:account/permissions result)))]
+        (is (= id (:account/id result)))
+        (is (= "Frank" (:account/name result)))
+        (is (= #{:account.permissions/read :account.permissions/write} perms)
+            "Raw enum values in set should be converted and saved"))))
 
   (testing "updates enum values via delta"
     (tu/with-test-conn [conn]

@@ -57,13 +57,45 @@
       (native-ident? env [attr normalized-id]) normalized-id
       :else [attr normalized-id])))
 
+(defn- enum-value->ident
+  "Convert an enum value to its :db/ident keyword for storage.
+   
+   If the value is already a qualified keyword, returns it as-is.
+   If unqualified, constructs the ident as <attr-ns>.<attr-name>/<value-name>.
+   
+   For example:
+   - (enum-value->ident :account/role :admin) => :account.role/admin
+   - (enum-value->ident :account/status :status/active) => :status/active (unchanged)"
+  [qualified-key value]
+  (if (qualified-keyword? value)
+    value
+    (let [enum-ns (str (namespace qualified-key) "." (name qualified-key))]
+      (keyword enum-ns (name value)))))
+
+(defn- convert-enum-value
+  "Convert an enum attribute value for storage.
+   
+   Handles both single values and sets (for cardinality :many).
+   Non-enum values pass through unchanged."
+  [{::attr/keys [key->attribute]} attr value]
+  (let [attribute (get key->attribute attr)]
+    (if (= :enum (::attr/type attribute))
+      (if (set? value)
+        (into #{} (map #(enum-value->ident attr %)) value)
+        (enum-value->ident attr value))
+      value)))
+
 (defn- delta-entry->txn
   "Convert a single delta entry to Datalevin transaction data.
    
    For native-id attributes:
    - New entities get a tempid that Datalevin will replace with :db/id
    - Existing entities use the raw :db/id directly
-   - The identity attribute is NOT added to the entity map (it's built-in)"
+   - The identity attribute is NOT added to the entity map (it's built-in)
+   
+   For enum attributes:
+   - Unqualified keywords are converted to their :db/ident format
+   - E.g., :admin becomes :account.role/admin for :account/role attribute"
   [env key-attr id delta]
   (let [normalized-id (normalize-ident-id id)
         is-native-id? (native-ident? env [key-attr normalized-id])
@@ -114,13 +146,13 @@
                           (let [value (cond
                                         (tempid/tempid? after) (:id after)
                                         (eql/ident? after) (ident->lookup-ref env after)
-                                        :else after)]
+                                        :else (convert-enum-value env attr after))]
                             (assoc txn-data attr value))
                           txn-data)))
                     base-entity
                     (into {} updates))
         retract-ops (mapv (fn [[attr {:keys [before]}]]
-                            [:db/retract entity-id attr before])
+                            [:db/retract entity-id attr (convert-enum-value env attr before)])
                           retractions)
         result (cond-> []
                  (> (count entity-map) 1)

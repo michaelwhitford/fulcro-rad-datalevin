@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+#### Enum Value Conversion in Save Operations (2024-11-28)
+- **FIX**: Unqualified enum values are now correctly converted to their `:db/ident` format when saving
+- Previously, saving an entity with raw enum values like `:admin` or `#{:read :write}` failed with:
+  ```
+  clojure.lang.ExceptionInfo: Nothing found for entity id :admin
+  ```
+- Root cause: Datalevin schemas define enums as `:db.type/ref`, which expects entity references, not raw keywords
+- The `start-databases` code correctly creates `:db/ident` entities (e.g., `:account.role/admin`), but the save code wasn't converting raw values to match
+- **Fix**: Added `convert-enum-value` function in `wrap-datalevin-save` that:
+  - Checks if an attribute is an enum type
+  - Converts unqualified keywords to their `:db/ident` format (e.g., `:admin` → `:account.role/admin`)
+  - Preserves already-qualified keywords (e.g., `:status/active` stays as-is)
+  - Handles sets for cardinality-many enums (e.g., `#{:read :write}` → `#{:account.permissions/read :account.permissions/write}`)
+- Also handles retraction operations that need the same conversion
+- Example transformation:
+  ```clojure
+  ;; Before (failed):
+  ;; Delta: {:account/role {:before nil :after :admin}}
+  ;; Transaction attempted: {:db/id [...] :account/role :admin}
+  ;; Error: Nothing found for entity id :admin
+  
+  ;; After (works):
+  ;; Delta: {:account/role {:before nil :after :admin}}
+  ;; Transaction: {:db/id [...] :account/role :account.role/admin}
+  ;; Success: Datalevin resolves :account.role/admin to the correct entity ref
+  ```
+- Tests: 29 tests, 203 assertions, 0 failures ✅
+
 #### Native-ID All-IDs Resolver (2024-11-27)
 - **FIX**: Native-ID all-ids resolver now correctly filters entities by type
 - Previously, the all-ids resolver for native-id attributes (e.g., `:person/id`) used the query `[:find ?e :where [?e _ _]]` which returned ALL entities in the database

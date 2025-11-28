@@ -266,9 +266,11 @@
   "Generates a resolver that returns all IDs for a given entity type.
 
    Arguments:
+   - all-attributes: All attributes in the system
    - id-attribute: The identity attribute (e.g., :account/id)
 
    Returns a resolver that outputs all entity IDs for queries like :account/all.
+   Use a join query to get additional fields: [{:account/all [:account/id :account/name]}]
 
    For native-id attributes, finds entities by querying for any non-identity attribute
    from the same entity type (e.g., for :person/id, looks for entities with :person/name).
