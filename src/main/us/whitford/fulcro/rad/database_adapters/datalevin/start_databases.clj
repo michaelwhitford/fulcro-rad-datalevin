@@ -28,7 +28,8 @@
    :symbol   :db.type/symbol
    :uuid     :db.type/uuid
    :ref      :db.type/ref
-   :tuple    :db.type/tuple})
+   :tuple    :db.type/tuple
+   :vec      :db.type/vec})
 
 ;; ================================================================================
 ;; Schema Generation
