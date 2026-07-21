@@ -5,7 +5,6 @@
    [com.fulcrologic.rad.ids :refer [new-uuid]]
    [us.whitford.fulcro.rad.database-adapters.datalevin :as dl]
    [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]
-   [us.whitford.fulcro.rad.database-adapters.datalevin.start-databases :as sd]
    [datalevin.core :as d]))
 
 ;; ================================================================================
@@ -132,24 +131,18 @@
 ;; ================================================================================
 
 (defn create-test-conn
-  "Create a test connection with schema and enum values."
+  "Create a test connection using the public `start-database!` entry point, which
+   builds the schema and seeds enum idents. Exercising the real public API keeps
+   tests decoupled from adapter internals."
   ([]
    (create-test-conn all-test-attributes))
   ([attributes]
    ;; Infer schema name from the first attribute's schema, default to :test
    (let [schema-name (or (::attr/schema (first attributes)) :test)
-         path (str "/tmp/datalevin-test-" (new-uuid))
-         schema (dl/automatic-schema schema-name attributes)
-         conn (d/get-conn path schema)
-         ;; Transact enum idents
-         enum-txn (#'sd/enumerated-values
-                   (filter #(= schema-name (::attr/schema %)) attributes))]
-     (when (seq enum-txn)
-       (try
-         (d/transact! conn enum-txn)
-         (catch Exception e
-           ;; Ignore if enums already exist
-           nil)))
+         path        (str "/tmp/datalevin-test-" (new-uuid))
+         conn        (dl/start-database! {:path       path
+                                          :schema     schema-name
+                                          :attributes attributes})]
      {:conn conn
       :path path})))
 

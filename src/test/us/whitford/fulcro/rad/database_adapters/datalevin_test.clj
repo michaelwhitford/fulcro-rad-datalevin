@@ -10,7 +10,6 @@
    [datalevin.core :as d]
    [us.whitford.fulcro.rad.database-adapters.datalevin :as dl]
    [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]
-   [us.whitford.fulcro.rad.database-adapters.datalevin.start-databases :as sd]
    [us.whitford.fulcro.rad.database-adapters.test-utils :as tu]))
 
 ;; ================================================================================
@@ -539,21 +538,25 @@
       ;; Many cardinality should be preserved
       (is (= :db.cardinality/many (get-in schema [:account/permissions :db/cardinality])))))
 
-  (testing "generates enum ident entities with unqualified keywords"
-    (let [enum-txn (#'sd/enumerated-values
-                    [tu/account-role])]
-      (is (= 3 (count enum-txn)))
-      (is (contains? (set (map :db/ident enum-txn)) :account.role/admin))
-      (is (contains? (set (map :db/ident enum-txn)) :account.role/user))
-      (is (contains? (set (map :db/ident enum-txn)) :account.role/guest))))
+  (testing "creates enum ident entities for unqualified enum values"
+    (tu/with-test-conn-attrs [conn [tu/account-id tu/account-role]]
+      (let [idents (into #{} (map first)
+                         (d/q '[:find ?ident :where [_ :db/ident ?ident]] (d/db conn)))
+            role-idents (filter #(= "account.role" (namespace %)) idents)]
+        (is (= 3 (count role-idents)))
+        (is (contains? idents :account.role/admin))
+        (is (contains? idents :account.role/user))
+        (is (contains? idents :account.role/guest)))))
 
-  (testing "generates enum ident entities with qualified keywords"
-    (let [enum-txn (#'us.whitford.fulcro.rad.database-adapters.datalevin.start-databases/enumerated-values
-                    [tu/account-status])]
-      (is (= 3 (count enum-txn)))
-      (is (contains? (set (map :db/ident enum-txn)) :status/active))
-      (is (contains? (set (map :db/ident enum-txn)) :status/inactive))
-      (is (contains? (set (map :db/ident enum-txn)) :status/pending)))))
+  (testing "creates enum ident entities for qualified enum values"
+    (tu/with-test-conn-attrs [conn [tu/account-id tu/account-status]]
+      (let [idents (into #{} (map first)
+                         (d/q '[:find ?ident :where [_ :db/ident ?ident]] (d/db conn)))
+            status-idents (filter #(= "status" (namespace %)) idents)]
+        (is (= 3 (count status-idents)))
+        (is (contains? idents :status/active))
+        (is (contains? idents :status/inactive))
+        (is (contains? idents :status/pending))))))
 
 (deftest enum-save-and-query
   (testing "saves and queries enum values with unqualified keywords"
