@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Database-Side Validation & Post-Conditions (Datalevin 1.0.0)
+- **NEW: Attribute predicates via native `:db.attr/preds`** — declare
+  database-enforced validation on an attribute by adding `:db.attr/preds` to its
+  `::dlo/attribute-schema`. The predicate(s) must be *qualified symbols* (the
+  schema is persisted and resolved via `requiring-resolve`), invoked as
+  `(pred value)` and must return strictly `true`; any other result aborts the
+  write with a `:transact/attr-pred` error. This follows the Datalevin-native
+  convention (and the Datomic adapter's "put native schema keys in
+  `attribute-schema`" philosophy) rather than introducing a new option key.
+  ```clojure
+  (defattr email :account/email :string
+    {::attr/identity?       true
+     ::dlo/attribute-schema {:db.attr/preds 'my.app/valid-email?}})
+  ```
+- **NEW: Transaction post-conditions via `:db/ensure` + `::dlo/raw-txn`** — new
+  env key `::dlo/raw-txn` and helper `append-to-raw-txn` (re-exported from the
+  `datalevin` facade) let save middleware append native Datalevin transaction
+  forms to a save. The primary use is `[:db/ensure pred & args]` post-conditions,
+  which run against `db-after` and abort the transaction on any falsey result.
+  ```clojure
+  (dlo/append-to-raw-txn env [[:db/ensure `my.app/balance-non-negative? [:account/id id]]])
+  ```
+  Note: in a multi-schema save the forms are appended to each affected schema's
+  transaction.
+- Tests: full suite 35 tests, 217 assertions, 0 failures ✅ (Datalevin 1.0.0)
+
 #### Vector Attribute Support (`:vec`)
 - **NEW**: RAD attributes of type `:vec` now map to Datalevin's `:db.type/vec`
   and initialize a vector (HNSW) index at connection time.
@@ -44,6 +70,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tests: 29 tests, 203 assertions, 0 failures ✅ (against Datalevin 1.0.0)
 
 ### Fixed
+
+#### Save Transactions No Longer Swallow Failures
+- **FIX**: `save-form!` previously caught transaction exceptions, logged, and
+  returned `{}` — silently reporting success on a failed save. It now rethrows
+  via `ex-info` with `{:schema :txn-data}` context so attribute-predicate
+  (`:transact/attr-pred`), `:db/ensure` post-condition, and any other transaction
+  failures propagate to the caller/client.
 
 #### Enum Value Conversion in Save Operations (2024-11-28)
 - **FIX**: Unqualified enum values are now correctly converted to their `:db/ident` format when saving

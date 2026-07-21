@@ -82,6 +82,10 @@
 (def keys-in-delta wds/keys-in-delta)
 (def schemas-for-delta wds/schemas-for-delta)
 (def save-form! wds/save-form!)
+(def append-to-raw-txn
+  "Append native Datalevin transaction forms (e.g. `[:db/ensure ...]`
+   post-conditions) to a save env. See wrap-datalevin-save/append-to-raw-txn."
+  wds/append-to-raw-txn)
 
 ;; Query utilities
 (def q util/q)

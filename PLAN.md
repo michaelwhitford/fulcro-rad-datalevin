@@ -86,20 +86,25 @@ Datomic adapter supports pruning pull queries to only fetch what the client requ
 
 ### 4. Raw Transaction Support
 **Source:** Datomic adapter  
-**Status:** Not implemented
+**Status:** ✅ COMPLETED (Datalevin 1.0.0)
 
 The `raw-txn` feature allows middleware to append additional transaction data.
+With Datalevin 1.0.0, the primary use is `:db/ensure` transaction post-conditions
+(the predicate runs against `db-after` and aborts the txn on any falsey result).
 
 **Use cases:**
 - Transaction metadata (`:db/ensure`, audit info)
-- Pre/post-condition checks via transaction functions
+- Pre/post-condition checks via `:db/ensure`
 - Custom enrichment
 
 **Implementation:**
-- [ ] Add `raw-txn` option key to `datalevin_options.cljc`
-- [ ] Add `append-to-raw-txn` helper function
-- [ ] Update `delta->txn` to include raw-txn
-- [ ] Update save middleware to support raw-txn
+- [x] Add `::dlo/raw-txn` option key to `datalevin_options.cljc`
+- [x] Add `append-to-raw-txn` helper function (re-exported from `datalevin` facade)
+- [x] Update save middleware (`save-form!`) to append raw-txn per affected schema
+- [x] Tests for `:db/ensure` pass/abort via `save-form!`
+
+**Note:** rather than routing through `delta->txn`, raw-txn forms are appended in
+`save-form!` (they are transaction-level, not delta-derived).
 
 ---
 
@@ -161,11 +166,18 @@ The `::pc/transform` attribute option allows transforming resolver config.
 
 ### 8. Schema Validation / Verification
 **Source:** Datomic adapter  
-**Status:** Partial (only ensure-schema!)
+**Status:** Partial — attribute predicates done; schema-compatibility verify pending
 
 Datomic has `verify-schema!` and `schema-problems` for validating schema compatibility.
 
+Datalevin 1.0.0 adds **attribute predicates** (`:db.attr/preds`) for database-side
+value validation, now supported via `::dlo/attribute-schema` pass-through (see
+CHANGELOG "Database-Side Validation & Post-Conditions"). Save failures now
+propagate instead of being swallowed.
+
 **Implementation:**
+- [x] Attribute predicates via native `:db.attr/preds` (`::dlo/attribute-schema`)
+- [x] Propagate save transaction failures (no longer swallowed)
 - [ ] Add `schema-problems` function to check db vs attributes
 - [ ] Add `verify-schema!` that throws on problems
 - [ ] Call verify after schema updates

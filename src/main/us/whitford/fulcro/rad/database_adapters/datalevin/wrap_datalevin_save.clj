@@ -214,8 +214,27 @@
                       all-keys)]
     schemas))
 
+(defn append-to-raw-txn
+  "Append native Datalevin transaction forms to the save environment.
+
+   `forms` is a sequential collection of raw Datalevin transaction operations
+   (e.g. `[[:db/ensure `my.ns/open? \"acct\"]]`) that will be appended to the
+   generated transaction for each affected schema during the save.
+
+   Intended for use by save middleware wrapping `wrap-datalevin-save`: modify the
+   env before delegating to the datalevin save handler. See `dlo/raw-txn`.
+
+   NOTE: In a multi-schema save the forms are appended to each schema's
+   transaction; reference entities that exist within a single schema."
+  [env forms]
+  (update env dlo/raw-txn (fnil into []) forms))
+
 (defn save-form!
-  "Do all of the possible datalevin operations for the given form delta (save to all datalevin databases involved)"
+  "Do all of the possible datalevin operations for the given form delta (save to all datalevin databases involved).
+
+   Any native Datalevin transaction forms accumulated under `dlo/raw-txn` in the
+   env (e.g. `[:db/ensure ...]` post-conditions) are appended to each affected
+   schema's transaction. See `append-to-raw-txn`."
   [env {::form/keys [delta]}]
   (let [schemas (schemas-for-delta env delta)
         result  (atom {:tempids {}})]
@@ -234,7 +253,8 @@
                                                     (= schema (::attr/schema attr))
                                                     (nil? (::attr/schema attr))))))
                                     delta)
-                txn-data      (delta->txn env schema-delta)]
+                raw-txn       (get env dlo/raw-txn)
+                txn-data      (into (delta->txn env schema-delta) raw-txn)]
             (log/debug "Running txn\n" (with-out-str (pprint txn-data)))
             (when (seq txn-data)
               (try
@@ -242,8 +262,15 @@
                       tempid-map (tempid->result-id tx-result schema-delta)]
                   (swap! result update :tempids merge tempid-map))
                 (catch Exception e
-                  (log/error e "Transaction failed!")
-                  {})))))
+                  ;; Propagate rather than swallow: attribute predicate
+                  ;; (:transact/attr-pred), :db/ensure post-condition, and other
+                  ;; transaction failures must surface to the caller/client so the
+                  ;; save is reported as failed instead of silently succeeding.
+                  (log/error e "Datalevin save transaction failed for schema" schema)
+                  (throw (ex-info "Datalevin save transaction failed"
+                                  {:schema   schema
+                                   :txn-data txn-data}
+                                  e)))))))
         (log/error "Unable to save form. Connection was missing in env.")))
     @result))
 
