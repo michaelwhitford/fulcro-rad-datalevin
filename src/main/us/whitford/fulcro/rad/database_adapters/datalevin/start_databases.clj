@@ -232,6 +232,18 @@
 ;; Connection Management
 ;; ================================================================================
 
+(defn- merge-conn-opts
+  "Merge user-supplied connection opts with the adapter-derived vector-domain
+   opts. User opts take precedence for every key except :vector-domains, where
+   the two maps are merged (derived per-domain dimensions combine with any
+   user-supplied per-domain overrides)."
+  [user-opts vec-opts]
+  (let [merged (merge user-opts vec-opts)]
+    (if (and (:vector-domains user-opts) (:vector-domains vec-opts))
+      (assoc merged :vector-domains (merge (:vector-domains user-opts)
+                                           (:vector-domains vec-opts)))
+      merged)))
+
 (defn start-database!
   "Start a Datalevin database connection.
 
@@ -241,23 +253,34 @@
      - :schema - RAD schema name (keyword)
      - :attributes - collection of RAD attributes
      - :auto-schema? - if true, automatically create schema from attributes (default true)
+     - :conn-opts - (optional) a map of native Datalevin `get-conn` options to
+       enable v1.0 features, e.g.
+       `{:auto-entity-time? true   ; maintain :db/created-at / :db/updated-at
+         :validate-data?    true   ; validate value types on transaction
+         :closed-schema?    true   ; reject attributes not in the schema
+         :wal?              true   ; enable WAL mode
+         :search-domains    {...}} ; full-text search configuration`
+       These are merged with the adapter-derived :vector-domains opts.
 
    Returns a Datalevin connection.
 
    For :vec attributes with :db.vec/dimensions in their dlo/attribute-schema,
    the vector domain options (including :dimensions) are passed to d/get-conn
    as :vector-domains connection opts so Datalevin can initialize the HNSW index."
-  [{:keys [path schema attributes auto-schema?]
+  [{:keys [path schema attributes auto-schema? conn-opts]
     :or   {auto-schema? true}}]
   (let [datalevin-schema (when auto-schema?
                            (automatic-schema schema attributes))
-        conn-opts        (when auto-schema?
+        vec-opts         (when auto-schema?
                            (vec-conn-opts schema attributes))
+        merged-opts      (merge-conn-opts conn-opts vec-opts)
         conn             (cond
-                           (and (seq datalevin-schema) (seq conn-opts))
-                           (d/get-conn path datalevin-schema conn-opts)
+                           (and (seq datalevin-schema) (seq merged-opts))
+                           (d/get-conn path datalevin-schema merged-opts)
                            (seq datalevin-schema)
                            (d/get-conn path datalevin-schema)
+                           (seq merged-opts)
+                           (d/get-conn path {} merged-opts)
                            :else
                            (d/get-conn path))]
     ;; Transact enum idents if we have any
@@ -291,7 +314,8 @@
    ```
    {::dlo/databases
     {:production {:path \"data/production\"
-                  :auto-schema? true}
+                  :auto-schema? true
+                  :conn-opts {:auto-entity-time? true}}
      :test       {:path \"data/test\"
                   :auto-schema? true}}}
    ```
@@ -300,6 +324,9 @@
    containing:
    - :path - directory path for database storage
    - :auto-schema? - if true, automatically generate schema from attributes (default true)
+   - :conn-opts - (optional) native Datalevin get-conn options (e.g.
+     :auto-entity-time?, :validate-data?, :closed-schema?, :wal?,
+     :search-domains). See `start-database!`.
 
    - options: a map that contains:
      - :attributes - collection of all RAD attributes

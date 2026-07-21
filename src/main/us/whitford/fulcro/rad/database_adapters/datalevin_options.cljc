@@ -92,7 +92,10 @@
 
 ;; Transaction options
 (def transact-options
-  "Map of options to pass to Datalevin transact! function"
+  "Save-env key. Value is passed as the `tx-meta` argument to Datalevin's
+   `transact!` for every save transaction (Datalevin's `transact!` takes
+   `[conn tx-data tx-meta]`). Use it to attach transaction metadata that shows
+   up in tx reports and `listen!` callbacks (e.g. audit/user context)."
   ::transact-options)
 
 (def raw-txn
@@ -122,13 +125,14 @@
 
 ;; Performance and safety limits
 (def transaction-timeout-ms
-  "Timeout in milliseconds for database transactions. Default: 30000"
+  "Save-env key. When present, each save transaction runs inside a Datalevin
+   `with-transaction` with this per-transaction `:timeout-ms`; if it does not
+   complete in time the transaction is aborted (Datalevin 1.0.0). When absent,
+   no timeout is applied. Prefer this over the global
+   `set-explicit-transaction-timeout!` for per-request control."
   ::transaction-timeout-ms)
 
-(def max-retries
-  "Maximum number of retry attempts for transient failures. Default: 3"
-  ::max-retries)
-
 (def max-batch-size
-  "Maximum number of entities to fetch in a single batch query. Default: 1000"
+  "Resolver-env key. Maximum number of entities fetched in a single batch query.
+   When present it overrides the default (1000) for auto-generated id-resolvers."
   ::max-batch-size)

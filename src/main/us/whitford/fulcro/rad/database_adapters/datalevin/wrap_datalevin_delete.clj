@@ -10,25 +10,41 @@
    [taoensso.timbre :as log]
    [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]))
 
+(defn- native-ident?
+  "Returns true if the delete's identity key uses a Datalevin native :db/id."
+  [{::attr/keys [key->attribute]} pk]
+  (boolean (some-> pk key->attribute dlo/native-id?)))
+
 (defn delete-entity!
-  "Delete the given entity, if possible."
+  "Delete the entity identified by the delete `params`.
+
+   Resolves the entity id with `d/entid` from the identity key: the raw id for
+   native-id attributes, otherwise the `[pk id]` lookup ref — so no extra query
+   is needed. Deleting a non-existent entity is an idempotent no-op. Transaction
+   failures are propagated via `ex-info` rather than swallowed."
   [{::attr/keys [key->attribute] :as env} params]
   (enc/if-let [pk    (ffirst params)
                id    (get params pk)
                ident [pk id]
                {:keys [::attr/schema]} (key->attribute pk)
                conn  (-> env dlo/connections (get schema))]
-    (do
-      (log/info "Deleting " ident)
-      (let [db  (d/db conn)
-            eid (ffirst (d/q '[:find ?e
-                               :in $ ?attr ?id
-                               :where [?e ?attr ?id]]
-                             db pk id))]
-        (if eid
-          (do
+    (let [db     (d/db conn)
+          lookup (if (native-ident? env pk) id [pk id])
+          eid    (d/entid db lookup)]
+      (if eid
+        (do
+          (log/info "Deleting" ident)
+          (try
             (d/transact! conn [[:db/retractEntity eid]])
-            {})
+            {}
+            (catch Exception e
+              (log/error e "Datalevin delete transaction failed for" ident)
+              (throw (ex-info "Datalevin delete transaction failed"
+                              {:ident  ident
+                               :schema schema}
+                              e)))))
+        (do
+          (log/info "Nothing to delete for" ident)
           {})))
     (do
       (log/warn "Datalevin adapter failed to delete" params)

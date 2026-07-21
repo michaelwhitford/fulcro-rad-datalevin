@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Connection Options & Write-Path Wiring (Datalevin 1.0.0)
+- **`:conn-opts` pass-through in `start-database!` / `start-databases`** — a
+  database config may now supply a `:conn-opts` map of native Datalevin
+  `get-conn` options, merged with the adapter-derived `:vector-domains`. This
+  unlocks v1.0 features without adapter changes, notably:
+  - `:auto-entity-time?` — Datalevin maintains `:db/created-at` / `:db/updated-at`
+    (epoch-millis) per entity automatically. Free audit timestamps for RAD
+    entities.
+  - `:validate-data?` — runtime value-type validation on transact.
+  - `:closed-schema?` — reject attributes not defined in the schema.
+  - `:wal?`, `:search-domains`, `:kv-opts`, `:idoc-domains`, etc.
+- **`::dlo/transact-options` is now honored** — passed as Datalevin `tx-meta`
+  (the third arg to `transact!`) for every save transaction, so it is visible in
+  tx reports and `listen!` callbacks (e.g. audit/user context).
+- **`::dlo/transaction-timeout-ms` is now honored** — when present, each save
+  transaction runs inside a `with-transaction` with that per-transaction
+  `:timeout-ms` and is aborted if it exceeds it (v1.0). Preferred over the global
+  `set-explicit-transaction-timeout!` for per-request control.
+- **`::dlo/max-batch-size` is now honored** — auto-generated id-resolvers read it
+  from the env to override the default (1000) batch limit (previously the option
+  was declared but ignored).
+
+### Changed
+
+#### Delete Middleware Parity
+- `delete-entity!` now resolves the entity via `d/entid` (raw id for native-id
+  attributes, `[pk id]` lookup ref otherwise) instead of a manual `d/q`, and
+  handles **native-id deletes** correctly. Deleting a non-existent entity remains
+  an idempotent no-op.
+
+#### Removed dead option
+- Removed `::dlo/max-retries` — it was declared but never implemented, and blind
+  retries are inappropriate for embedded Datalevin (no transient network layer,
+  and permanent failures like `:transact/attr-pred` must not be retried).
+
+### Fixed
+
+#### Delete Transactions No Longer Swallow Failures
+- `delete-entity!` now propagates transaction failures via `ex-info`
+  (`{:ident :schema}`) instead of returning `{}` silently — mirroring the earlier
+  save-path fix.
+
 #### Adapter Parity Enhancements
 - **Numeric coercion on save (`fix-numerics`)** — incoming values are now coerced
   to match the RAD attribute's declared numeric type before transacting

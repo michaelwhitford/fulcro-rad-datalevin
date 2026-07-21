@@ -7,12 +7,63 @@
    [clojure.string :as str]
    [clojure.test :refer [deftest testing is]]
    [com.fulcrologic.rad.attributes :as attr]
+   [com.fulcrologic.rad.form :as form]
    [com.fulcrologic.rad.ids :refer [new-uuid]]
    [com.wsscode.pathom3.connect.operation :as pco]
    [datalevin.core :as d]
    [us.whitford.fulcro.rad.database-adapters.datalevin :as dl]
    [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]
    [us.whitford.fulcro.rad.database-adapters.test-utils :as tu]))
+
+(defn slow-ensure
+  "A :db/ensure predicate that sleeps long enough to trip a small timeout."
+  [_db _eid]
+  (Thread/sleep 500)
+  true)
+
+;; ================================================================================
+;; Tier 1: connection options pass-through (:conn-opts)
+;; ================================================================================
+
+(defn- with-conn-opts*
+  "Start a conn with the given :conn-opts, run (f conn), always clean up."
+  [conn-opts f]
+  (let [path (str "/tmp/datalevin-connopts-" (new-uuid))
+        conn (dl/start-database! {:path       path
+                                  :schema     :test
+                                  :attributes tu/all-test-attributes
+                                  :conn-opts  conn-opts})]
+    (try
+      (f conn)
+      (finally
+        (dl/stop-database! conn)
+        (tu/cleanup-path path)))))
+
+(deftest conn-opts-auto-entity-time
+  (testing ":auto-entity-time? maintains :db/created-at and :db/updated-at"
+    (with-conn-opts* {:auto-entity-time? true}
+      (fn [conn]
+        (let [id (new-uuid)]
+          (d/transact! conn [{:account/id id :account/name "Alice"}])
+          (let [e (d/pull (d/db conn) [:db/created-at :db/updated-at] [:account/id id])]
+            ;; Datalevin stores these as epoch-millis longs.
+            (is (pos-int? (:db/created-at e))
+                "entity gets a :db/created-at timestamp")
+            (is (pos-int? (:db/updated-at e))
+                "entity gets a :db/updated-at timestamp")
+            (is (<= (:db/created-at e) (:db/updated-at e))
+                ":db/updated-at is at or after :db/created-at")))))))
+
+(deftest conn-opts-closed-schema
+  (testing ":closed-schema? rejects attributes not present in the schema"
+    (with-conn-opts* {:closed-schema? true}
+      (fn [conn]
+        (let [id (new-uuid)]
+          (is (thrown? Exception
+                       (d/transact! conn [{:account/id id :account/not-a-real-attr "x"}]))
+              "an undefined attribute is rejected")
+          (is (some? (d/transact! conn [{:account/id id :account/name "Ok"}]))
+              "a defined attribute is still accepted"))))))
 
 ;; ================================================================================
 ;; PLAN #9: fix-numerics coercion in save
@@ -190,3 +241,96 @@
         (is (= :missing (:problem nick)))
         (is (thrown? clojure.lang.ExceptionInfo
                      (dl/verify-schema! conn :test attrs)))))))
+
+;; ================================================================================
+;; Tier 2: wired options (transact-options / max-batch-size / timeout)
+;; ================================================================================
+
+(deftest transact-options-passed-as-tx-meta
+  (testing "::dlo/transact-options is passed to transact! as tx-meta"
+    (tu/with-test-conn [conn]
+      (let [captured (atom :none)]
+        (d/listen! conn ::probe (fn [report] (reset! captured (:tx-meta report))))
+        (let [id  (new-uuid)
+              env {::attr/key->attribute  (tu/key->attribute-map tu/all-test-attributes)
+                   ::dlo/connections      {:test conn}
+                   ::dlo/transact-options {:audit/user "u1"}}]
+          (dl/save-form! env {::form/delta {[:account/id id]
+                                            {:account/id   {:before nil :after id}
+                                             :account/name {:before nil :after "A"}}}})
+          (d/unlisten! conn ::probe)
+          (is (= {:audit/user "u1"} @captured)
+              "the listener's tx report carries the supplied tx-meta"))))))
+
+(deftest max-batch-size-option-limits-batch
+  (testing "::dlo/max-batch-size overrides the id-resolver batch limit"
+    (tu/with-test-conn [conn]
+      (let [id1 (new-uuid) id2 (new-uuid)]
+        (d/transact! conn [{:account/id id1 :account/name "A"}
+                           {:account/id id2 :account/name "B"}])
+        (let [resolvers (dl/generate-resolvers tu/all-test-attributes :test)
+              r         (first (filter #(= :account/id (first (::pco/input (:config %)))) resolvers))
+              env       (assoc (tu/mock-resolver-env {:test conn})
+                               ::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
+                               ::dlo/max-batch-size 1)]
+          (is (thrown? clojure.lang.ExceptionInfo
+                       ((:resolve r) env [{:account/id id1} {:account/id id2}]))
+              "resolving more ids than max-batch-size throws"))))))
+
+(deftest transaction-timeout-aborts-slow-save
+  (testing "::dlo/transaction-timeout-ms aborts a save that exceeds the timeout"
+    (tu/with-test-conn [conn]
+      (let [id (new-uuid)]
+        (d/transact! conn [{:account/id id :account/balance 100.0}])
+        (let [env   (-> {::attr/key->attribute        (tu/key->attribute-map tu/all-test-attributes)
+                         ::dlo/connections            {:test conn}
+                         ::dlo/transaction-timeout-ms 50}
+                        (dl/append-to-raw-txn [[:db/ensure `slow-ensure [:account/id id]]]))
+              delta {[:account/id id] {:account/balance {:before 100.0 :after 200.0}}}]
+          (is (thrown? Exception (dl/save-form! env {::form/delta delta}))
+              "a save slower than the timeout is aborted")
+          (is (= 100.0 (:account/balance
+                        (d/pull (d/db conn) [:account/balance] [:account/id id])))
+              "the aborted transaction leaves the balance unchanged"))))))
+
+(deftest transaction-timeout-allows-fast-save
+  (testing "a save well within ::dlo/transaction-timeout-ms succeeds"
+    (tu/with-test-conn [conn]
+      (let [id  (new-uuid)
+            env {::attr/key->attribute        (tu/key->attribute-map tu/all-test-attributes)
+                 ::dlo/connections            {:test conn}
+                 ::dlo/transaction-timeout-ms 5000}]
+        (dl/save-form! env {::form/delta {[:account/id id]
+                                          {:account/id   {:before nil :after id}
+                                           :account/name {:before nil :after "Fast"}}}})
+        (is (= "Fast" (:account/name
+                       (d/pull (d/db conn) [:account/name] [:account/id id])))
+            "the save committed through the with-transaction timeout path")))))
+
+;; ================================================================================
+;; Tier 3: delete middleware (native-id + idempotent no-op)
+;; ================================================================================
+
+(deftest delete-native-id-entity
+  (testing "deletes a native-id entity by its raw :db/id"
+    (tu/with-test-conn-attrs [conn tu/native-id-attributes]
+      (let [{:keys [tempids]} (d/transact! conn [{:db/id -1 :person/name "Zoe" :person/age 22}])
+            eid        (get tempids -1)
+            env        {::attr/key->attribute (tu/key->attribute-map tu/native-id-attributes)
+                        ::dlo/connections     {:native-test conn}
+                        ::form/params         {:person/id eid}}
+            middleware (dl/wrap-datalevin-delete)
+            result     (middleware env)]
+        (is (map? result))
+        (is (nil? (d/pull (d/db conn) [:person/name] eid))
+            "the native-id entity is gone after delete")))))
+
+(deftest delete-missing-entity-is-noop
+  (testing "deleting a non-existent entity is an idempotent no-op (no throw)"
+    (tu/with-test-conn [conn]
+      (let [env        {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
+                        ::dlo/connections     {:test conn}
+                        ::form/params         {:account/id (new-uuid)}}
+            middleware (dl/wrap-datalevin-delete)]
+        (is (map? (middleware env))
+            "delete of a missing entity returns a result map without throwing")))))

@@ -245,6 +245,20 @@
   [env forms]
   (update env dlo/raw-txn (fnil into []) forms))
 
+(defn- run-save-transact!
+  "Transact `txn-data` on `conn`, honoring optional save-env options:
+   - `dlo/transact-options` is passed as Datalevin `tx-meta`.
+   - `dlo/transaction-timeout-ms`, when present, runs the transaction inside a
+     `with-transaction` with that per-transaction `:timeout-ms`.
+   Returns the transaction report."
+  [env conn txn-data]
+  (let [tx-meta    (dlo/transact-options env)
+        timeout-ms (dlo/transaction-timeout-ms env)]
+    (if timeout-ms
+      (d/with-transaction [tx-conn conn {:timeout-ms timeout-ms}]
+        (d/transact! tx-conn txn-data tx-meta))
+      (d/transact! conn txn-data tx-meta))))
+
 (defn save-form!
   "Do all of the possible datalevin operations for the given form delta (save to all datalevin databases involved).
 
@@ -274,7 +288,7 @@
             (log/debug "Running txn\n" (with-out-str (pprint txn-data)))
             (when (seq txn-data)
               (try
-                (let [tx-result (d/transact! conn txn-data)
+                (let [tx-result (run-save-transact! env conn txn-data)
                       tempid-map (tempid->result-id tx-result schema-delta)]
                   (swap! result update :tempids merge tempid-map))
                 (catch Exception e

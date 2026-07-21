@@ -368,3 +368,23 @@ datalevin_options.cljc  ✅
 - Datalevin is Datalog-based like Datomic, so most Datomic patterns apply
 - Priority should be on features that affect correctness, then performance
 - Enum support was recently added and is working well
+
+## Datalevin 1.0.0 Wiring (completed)
+
+Upgraded to Datalevin 1.0.0 and surfaced its capabilities through the adapter:
+- ✅ `:vec` vector attributes → HNSW index (`:vector-domains`)
+- ✅ Attribute predicates via native `:db.attr/preds`
+- ✅ Transaction post-conditions via `:db/ensure` + `::dlo/raw-txn`
+- ✅ `schema-problems` / `verify-schema!`
+- ✅ `fix-numerics` value coercion (#9)
+- ✅ `:conn-opts` pass-through in `start-database!` — enables `:auto-entity-time?`,
+  `:validate-data?`, `:closed-schema?`, `:wal?`, `:search-domains`, etc.
+- ✅ Wired previously-dead options: `::dlo/transact-options` (tx-meta),
+  `::dlo/transaction-timeout-ms` (per-txn `with-transaction` timeout),
+  `::dlo/max-batch-size`; removed unimplementable `::dlo/max-retries`
+- ✅ Delete middleware parity: `d/entid` lookup, native-id deletes, failure
+  propagation
+
+Remaining v1.0 opportunities (future): full-text search (`:db/fulltext`,
+`:search-domains`, `:limit`/`:offset`), bulk load via `transact-async` /
+`init-db` / `fill-db`, and a tuple round-trip test under v1.0 storage.

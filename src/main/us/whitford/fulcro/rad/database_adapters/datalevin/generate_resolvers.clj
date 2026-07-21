@@ -235,7 +235,8 @@
                                output-attributes)
           resolve-sym    (symbol (str (namespace qualified-key) "." (name qualified-key) "-resolver"))
           core-resolver  (fn [{::dlo/keys [databases] ::attr/keys [key->attribute] :as env} inputs]
-                           (let [db     (get databases schema)
+                           (binding [*max-batch-size* (or (dlo/max-batch-size env) *max-batch-size*)]
+                            (let [db     (get databases schema)
                                  ids    (mapv #(get % qualified-key) inputs)
                                  data   (get-by-ids db qualified-key ids datalevin-pull enum-keys is-native-id?)
                                  ;; Convert :db/id back to qualified key for native IDs
@@ -245,7 +246,7 @@
                                  fixed  (if is-native-id?
                                           (datalevin-result->pathom-result key->attribute pathom-pattern result)
                                           result)]
-                             (auth/redact env fixed)))
+                             (auth/redact env fixed))))
           final-resolver (if wrap-resolve
                            (wrap-resolve core-resolver)
                            core-resolver)]
