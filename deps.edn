@@ -1,14 +1,14 @@
 {:paths   ["src/main" "resources"]
 
  :deps    {org.clojure/clojure        {:mvn/version "1.12.4"}
-           com.fulcrologic/fulcro     {:mvn/version "3.9.2"}
-           com.fulcrologic/fulcro-rad {:mvn/version "1.6.20"}
+           com.fulcrologic/fulcro     {:mvn/version "3.9.3"}
+           com.fulcrologic/fulcro-rad {:mvn/version "1.6.23"}
            com.fulcrologic/guardrails {:mvn/version "1.2.16"}
-           datalevin/datalevin        {:mvn/version "0.10.5"}
+           datalevin/datalevin        {:mvn/version "1.0.0"}
            com.wsscode/pathom3        {:mvn/version "2025.01.16-alpha"}
            edn-query-language/eql     {:mvn/version "2025.09.27"}
            com.taoensso/timbre        {:mvn/version "6.8.0"}
-           com.taoensso/encore        {:mvn/version "3.159.0"}}
+           com.taoensso/encore        {:mvn/version "3.169.1"}}
 
  :aliases {:test    {:extra-paths ["src/test"]
                      :extra-deps  {fulcrologic/fulcro-spec {:mvn/version "3.2.6"}}}

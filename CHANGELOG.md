@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+#### Vector Attribute Support (`:vec`)
+- **NEW**: RAD attributes of type `:vec` now map to Datalevin's `:db.type/vec`
+  and initialize a vector (HNSW) index at connection time.
+- The vector index configuration (notably `:dimensions`) lives on the connection,
+  not the schema. `start-database` now:
+  - Strips `:db.vec/dimensions` from the generated schema map (it is not a valid
+    Datalevin schema key).
+  - Derives the vector domain name from the attribute's qualified key via
+    `vec-attr-domain` (mirrors `datalevin.vector/attr-domain`: `/` → `_`).
+  - Passes `:vector-domains {"domain" {:dimensions N}}` to `d/get-conn` so
+    Datalevin can build the HNSW index.
+- New public helper `vec-conn-opts` extracts these connection options from the
+  `:vec` attributes for a schema.
+- Verified against Datalevin 1.0.0's `init-vector-domains` (storage layer), which
+  walks the schema for `:db.type/vec` attributes and merges per-domain config
+  from the `:vector-domains` connection option.
+
+### Changed
+
+#### Dependency Upgrades
+- **Datalevin `0.10.5` → `1.0.0`** — first stable Datalevin release. Notable
+  upstream additions now available to build on: `:db/ensure` transaction special
+  form (post-condition checks), `:db.attr/preds` attribute predicates,
+  `datalog-kv`, and search `:limit`/`:offset`.
+  - Note: composite tuple storage changed in 1.0.0 (existing tuple storage is
+    rewritten by version migration; `:bytes` is no longer a valid tuple
+    component). No impact on this adapter's current usage.
+- **Fulcro `3.9.2` → `3.9.3`**
+- **Fulcro RAD `1.6.20` → `1.6.23`**
+- **encore `3.159.0` → `3.169.1`** — required by Datalevin 1.0.0's
+  `nippy 3.7.0-beta1` (needs `encore >= 3.160.1`); resolves a version-conflict
+  load error.
+- Tests: 29 tests, 203 assertions, 0 failures ✅ (against Datalevin 1.0.0)
+
 ### Fixed
 
 #### Enum Value Conversion in Save Operations (2024-11-28)

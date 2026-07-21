@@ -2,6 +2,7 @@
   "Database lifecycle management for Datalevin adapter."
   (:require
    [clojure.spec.alpha :as s]
+   [clojure.string :as str]
    [com.fulcrologic.guardrails.core :refer [>defn =>]]
    [com.fulcrologic.rad.attributes :as attr]
    [datalevin.core :as d]
@@ -35,6 +36,12 @@
 ;; Schema Generation
 ;; ================================================================================
 
+(defn- vec-attr-domain
+  "Convert a qualified keyword to a Datalevin vector domain string.
+   Matches datalevin.vector/attr-domain: replaces '/' with '_'."
+  [qualified-key]
+  (str/replace (str (namespace qualified-key) "/" (name qualified-key)) "/" "_"))
+
 (defn- attr->schema
   "Convert a single RAD attribute to Datalevin schema entry.
    Returns a map entry [attr-key schema-map], or nil for native-id attributes."
@@ -55,9 +62,37 @@
                            (assoc :db/unique :db.unique/identity)
 
                            (= :ref type)
-                           (assoc :db/valueType :db.type/ref))]
+                           (assoc :db/valueType :db.type/ref))
+          ;; For :vec attributes, strip :db.vec/dimensions — it's not a valid
+          ;; Datalevin schema key. Dimensions are passed separately as vector-domains
+          ;; connection opts. See vec-conn-opts.
+          clean-attr-schema (if (= :vec type)
+                              (dissoc attribute-schema :db.vec/dimensions)
+                              attribute-schema)]
       (when (seq base-schema)
-        [qualified-key (merge base-schema attribute-schema)]))))
+        [qualified-key (merge base-schema clean-attr-schema)]))))
+
+(defn vec-conn-opts
+  "Extract vector domain options from :vec RAD attributes for passing to d/get-conn.
+   Returns {:vector-domains {\"domain_name\" {:dimensions N ...}}} or nil.
+
+   Datalevin's d/get-conn accepts :vector-domains as a top-level option:
+   per-domain opts (including :dimensions) that override the defaults.
+   The schema attribute's :db.vec/domains just names which domain(s) an
+   attribute belongs to — the actual vector index config lives here."
+  [schema-name attributes]
+  (let [relevant (filter #(and (= schema-name (::attr/schema %))
+                                (= :vec (::attr/type %)))
+                   attributes)
+        domains  (reduce (fn [acc attr]
+                           (let [dims   (get-in attr [::dlo/attribute-schema :db.vec/dimensions])
+                                 domain (vec-attr-domain (::attr/qualified-key attr))]
+                             (if dims
+                               (assoc acc domain {:dimensions dims})
+                               acc)))
+                   {} relevant)]
+    (when (seq domains)
+      {:vector-domains domains})))
 
 (defn- enumerated-values
   "Generate schema entries for enumerated values.
@@ -155,13 +190,23 @@
      - :attributes - collection of RAD attributes
      - :auto-schema? - if true, automatically create schema from attributes (default true)
 
-   Returns a Datalevin connection."
+   Returns a Datalevin connection.
+
+   For :vec attributes with :db.vec/dimensions in their dlo/attribute-schema,
+   the vector domain options (including :dimensions) are passed to d/get-conn
+   as :vector-domains connection opts so Datalevin can initialize the HNSW index."
   [{:keys [path schema attributes auto-schema?]
     :or   {auto-schema? true}}]
   (let [datalevin-schema (when auto-schema?
                            (automatic-schema schema attributes))
-        conn             (if (seq datalevin-schema)
+        conn-opts        (when auto-schema?
+                           (vec-conn-opts schema attributes))
+        conn             (cond
+                           (and (seq datalevin-schema) (seq conn-opts))
+                           (d/get-conn path datalevin-schema conn-opts)
+                           (seq datalevin-schema)
                            (d/get-conn path datalevin-schema)
+                           :else
                            (d/get-conn path))]
     ;; Transact enum idents if we have any
     (when auto-schema?
