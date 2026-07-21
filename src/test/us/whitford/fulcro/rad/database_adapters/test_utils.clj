@@ -133,16 +133,29 @@
 (defn create-test-conn
   "Create a test connection using the public `start-database!` entry point, which
    builds the schema and seeds enum idents. Exercising the real public API keeps
-   tests decoupled from adapter internals."
+   tests decoupled from adapter internals.
+
+   A test connection is a single physical Datalevin database. When the given
+   `attributes` span multiple RAD `::attr/schema`s, `start-database!` is invoked
+   once per distinct schema on the SAME `path`, so the connection ends up with
+   the full schema and every schema's enum idents seeded (`get-conn` merges the
+   schema across calls). This avoids relying on schema-on-write for attributes
+   outside the first schema.
+
+   Note: production topology is one database per RAD schema (see
+   `start-databases`). Co-locating multiple schemas here is a test convenience
+   for exercising cross-entity-type behavior within one database."
   ([]
    (create-test-conn all-test-attributes))
   ([attributes]
-   ;; Infer schema name from the first attribute's schema, default to :test
-   (let [schema-name (or (::attr/schema (first attributes)) :test)
-         path        (str "/tmp/datalevin-test-" (new-uuid))
-         conn        (dl/start-database! {:path       path
-                                          :schema     schema-name
-                                          :attributes attributes})]
+   (let [schema-names (or (seq (distinct (keep ::attr/schema attributes))) [:test])
+         path         (str "/tmp/datalevin-test-" (new-uuid))
+         conn         (reduce (fn [_ schema-name]
+                                (dl/start-database! {:path       path
+                                                     :schema     schema-name
+                                                     :attributes attributes}))
+                              nil
+                              schema-names)]
      {:conn conn
       :path path})))
 

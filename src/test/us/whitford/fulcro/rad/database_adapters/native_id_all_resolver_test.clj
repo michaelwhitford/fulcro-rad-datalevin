@@ -24,14 +24,20 @@
       (d/transact! conn [{:person/name "Alice" :person/email "alice@test.com" :person/age 30}
                          {:person/name "Bob" :person/email "bob@test.com" :person/age 25}])
       
-      ;; Insert some account entities (UUID ID)
+      ;; Insert some account entities (UUID ID), one carrying an enum ref
       (let [acc-id1 (new-uuid)
             acc-id2 (new-uuid)]
-        (d/transact! conn [{:account/id acc-id1 :account/name "Account 1"}
+        (d/transact! conn [{:account/id acc-id1 :account/name "Account 1"
+                            :account/role :account.role/admin}
                            {:account/id acc-id2 :account/name "Account 2"}]))
-      
-      ;; Enum values are automatically created (e.g., :account.role/admin)
-      ;; Empty entities might exist from previous operations
+
+      ;; Sanity: the same database really does contain non-person noise the
+      ;; resolver must exclude — enum ident entities (seeded from the :test
+      ;; schema) and account entities.
+      (let [idents (into #{} (map first)
+                         (d/q '[:find ?i :where [_ :db/ident ?i]] (d/db conn)))]
+        (is (contains? idents :account.role/admin)
+            "account.role enum idents are present as noise in the same db"))
       
       ;; Generate resolvers
       (let [resolvers (dl/generate-resolvers (concat tu/native-id-attributes tu/all-test-attributes) :native-test)
