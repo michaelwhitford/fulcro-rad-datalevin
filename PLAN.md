@@ -110,7 +110,7 @@ With Datalevin 1.0.0, the primary use is `:db/ensure` transaction post-condition
 
 ### 5. Wrap-Resolve Support
 **Source:** Datomic adapter  
-**Status:** Not implemented
+**Status:** ✅ COMPLETED
 
 Allows wrapping resolver logic for custom input/output manipulation.
 
@@ -126,8 +126,9 @@ Allows wrapping resolver logic for custom input/output manipulation.
 ```
 
 **Implementation:**
-- [ ] Add `wrap-resolve` option to `datalevin_options.cljc`
-- [ ] Update `id-resolver` to apply wrap-resolve
+- [x] Add `::dlo/wrap-resolve` option to `datalevin_options.cljc`
+- [x] `id-resolver` applies wrap-resolve to the generated resolver
+- [x] Tests verifying pre/post-processing wrapping
 
 ---
 
@@ -178,15 +179,15 @@ propagate instead of being swallowed.
 **Implementation:**
 - [x] Attribute predicates via native `:db.attr/preds` (`::dlo/attribute-schema`)
 - [x] Propagate save transaction failures (no longer swallowed)
-- [ ] Add `schema-problems` function to check db vs attributes
-- [ ] Add `verify-schema!` that throws on problems
-- [ ] Call verify after schema updates
+- [x] Add `schema-problems` function to check db vs attributes
+- [x] Add `verify-schema!` that throws on problems (re-exported from facade)
+- [ ] Optionally call verify after schema updates in `start-database!`
 
 ---
 
 ### 9. Fix Numerics Helper
 **Source:** Datomic adapter  
-**Status:** Not implemented
+**Status:** ✅ COMPLETED
 
 JavaScript can send integers when floats are expected. The `fix-numerics` function handles type coercion.
 
@@ -201,8 +202,9 @@ JavaScript can send integers when floats are expected. The `fix-numerics` functi
 ```
 
 **Implementation:**
-- [ ] Add `fix-numerics` to wrap_datalevin_save.clj
-- [ ] Apply in `tx-value` conversion
+- [x] Add `fix-numerics` to wrap_datalevin_save.clj (also handles `:bigdec`)
+- [x] Apply in the value conversion path of `delta-entry->txn`
+- [x] Tests for `:double`←int and `:long`←double coercion (delta + round-trip)
 
 ---
 

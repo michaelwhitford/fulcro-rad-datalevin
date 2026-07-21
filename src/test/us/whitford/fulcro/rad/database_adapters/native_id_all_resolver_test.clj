@@ -142,16 +142,13 @@
                                                resolvers))
             env (assoc (tu/mock-resolver-env {:native-test conn})
                        ::attr/key->attribute (tu/key->attribute-map tu/native-id-attributes))
-            result ((:resolve person-all-resolver) env {})]
-        
+            result ((:resolve person-all-resolver) env {})
+            n (count (:person/all result))]
         ;; If querying by :person/name, would only find Eve
         ;; If querying by any attribute (correct), would find both
-        (let [count (count (:person/all result))]
-          ;; The fix uses the first non-identity attribute found
-          ;; which might be :person/age, :person/bio, :person/email, or :person/name
-          ;; depending on iteration order
-          (is (>= count 1) "Should find at least one person")
-          (is (<= count 2) "Should not find more than 2 persons"))))))
+        ;; The fix uses the first non-identity attribute found
+        (is (>= n 1) "Should find at least one person")
+        (is (<= n 2) "Should not find more than 2 persons")))))
 
 (comment
   ;; Run tests

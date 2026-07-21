@@ -10,6 +10,7 @@
    [datalevin.core :as d]
    [us.whitford.fulcro.rad.database-adapters.datalevin :as dl]
    [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]
+   [us.whitford.fulcro.rad.database-adapters.datalevin.start-databases :as sd]
    [us.whitford.fulcro.rad.database-adapters.test-utils :as tu]))
 
 ;; ================================================================================
@@ -539,7 +540,7 @@
       (is (= :db.cardinality/many (get-in schema [:account/permissions :db/cardinality])))))
 
   (testing "generates enum ident entities with unqualified keywords"
-    (let [enum-txn (#'us.whitford.fulcro.rad.database-adapters.datalevin.start-databases/enumerated-values
+    (let [enum-txn (#'sd/enumerated-values
                     [tu/account-role])]
       (is (= 3 (count enum-txn)))
       (is (contains? (set (map :db/ident enum-txn)) :account.role/admin))

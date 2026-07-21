@@ -36,6 +36,14 @@
 ;; Schema generation
 (def automatic-schema sd/automatic-schema)
 (def ensure-schema! sd/ensure-schema!)
+(def schema-problems
+  "Return a seq of problems comparing the RAD-derived expected schema against the
+   live Datalevin schema of a connection. See start-databases/schema-problems."
+  sd/schema-problems)
+(def verify-schema!
+  "Throw when the live Datalevin schema does not satisfy the RAD-derived expected
+   schema; returns true otherwise. See start-databases/verify-schema!."
+  sd/verify-schema!)
 
 ;; Pathom integration
 (def pathom-plugin pp/pathom-plugin)

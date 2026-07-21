@@ -177,6 +177,58 @@
                         e))))))
 
 ;; ================================================================================
+;; Schema Verification
+;; ================================================================================
+
+(def ^:private verified-schema-keys
+  "The schema properties the adapter manages and therefore verifies."
+  [:db/valueType :db/cardinality :db/unique])
+
+(defn schema-problems
+  "Compare the RAD-derived expected schema for `schema-name` against the live
+   Datalevin schema of `conn`, returning a (possibly empty) sequence of problem
+   maps.
+
+   Each problem is one of:
+   - `{:attribute k :problem :missing  :expected {...}}`
+       the attribute is expected but absent from the database schema
+   - `{:attribute k :problem :mismatch :key kk :expected e :actual a}`
+       a managed property differs from what the database has
+
+   Only the adapter-managed keys (`:db/valueType`, `:db/cardinality`,
+   `:db/unique`) are compared, and only when present in the expected schema, so
+   database defaults and internal keys (e.g. `:db/aid`) do not produce false
+   positives."
+  [conn schema-name attributes]
+  (let [expected (automatic-schema schema-name attributes)
+        actual   (d/schema conn)]
+    (reduce-kv
+     (fn [problems attr exp]
+       (let [act (get actual attr)]
+         (if (nil? act)
+           (conj problems {:attribute attr :problem :missing :expected exp})
+           (into problems
+                 (for [k     verified-schema-keys
+                       :when (and (contains? exp k)
+                                  (not= (get exp k) (get act k)))]
+                   {:attribute attr :problem :mismatch :key k
+                    :expected  (get exp k) :actual (get act k)})))))
+     []
+     expected)))
+
+(defn verify-schema!
+  "Throw when the live Datalevin schema of `conn` does not satisfy the
+   RAD-derived expected schema for `schema-name`. Returns `true` when there are
+   no problems. See `schema-problems` for the problem shape."
+  [conn schema-name attributes]
+  (let [problems (schema-problems conn schema-name attributes)]
+    (when (seq problems)
+      (throw (ex-info "Datalevin schema verification failed"
+                      {:schema   schema-name
+                       :problems problems})))
+    true))
+
+;; ================================================================================
 ;; Connection Management
 ;; ================================================================================
 

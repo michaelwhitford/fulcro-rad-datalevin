@@ -85,6 +85,22 @@
         (enum-value->ident attr value))
       value)))
 
+(defn- fix-numerics
+  "Coerce a value to match the RAD attribute's numeric type.
+
+   JavaScript clients may transmit integers where doubles are expected (and vice
+   versa); this normalizes the value so Datalevin stores the declared type and
+   avoids `:db.type` mismatch errors on write. Non-numeric values and
+   non-numeric attribute types pass through unchanged."
+  [{::attr/keys [key->attribute]} attr v]
+  (if (number? v)
+    (case (::attr/type (get key->attribute attr))
+      (:int :long)     (long v)
+      (:double :float) (double v)
+      :bigdec          (bigdec v)
+      v)
+    v))
+
 (defn- delta-entry->txn
   "Convert a single delta entry to Datalevin transaction data.
    
@@ -146,7 +162,7 @@
                           (let [value (cond
                                         (tempid/tempid? after) (:id after)
                                         (eql/ident? after) (ident->lookup-ref env after)
-                                        :else (convert-enum-value env attr after))]
+                                        :else (fix-numerics env attr (convert-enum-value env attr after)))]
                             (assoc txn-data attr value))
                           txn-data)))
                     base-entity

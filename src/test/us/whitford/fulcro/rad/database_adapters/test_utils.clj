@@ -2,9 +2,10 @@
   "Shared test utilities and test data for datalevin adapter tests."
   (:require
    [com.fulcrologic.rad.attributes :as attr]
+   [com.fulcrologic.rad.ids :refer [new-uuid]]
    [us.whitford.fulcro.rad.database-adapters.datalevin :as dl]
    [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]
-   [com.fulcrologic.rad.ids :refer [new-uuid]]
+   [us.whitford.fulcro.rad.database-adapters.datalevin.start-databases :as sd]
    [datalevin.core :as d]))
 
 ;; ================================================================================
@@ -141,7 +142,7 @@
          schema (dl/automatic-schema schema-name attributes)
          conn (d/get-conn path schema)
          ;; Transact enum idents
-         enum-txn (#'us.whitford.fulcro.rad.database-adapters.datalevin.start-databases/enumerated-values
+         enum-txn (#'sd/enumerated-values
                    (filter #(= schema-name (::attr/schema %)) attributes))]
      (when (seq enum-txn)
        (try

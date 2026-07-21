@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Adapter Parity Enhancements
+- **Numeric coercion on save (`fix-numerics`)** — incoming values are now coerced
+  to match the RAD attribute's declared numeric type before transacting
+  (`:int`/`:long` → long, `:double`/`:float` → double, `:bigdec` → bigdec). This
+  handles JavaScript clients that transmit integers where doubles are expected
+  (and vice versa), avoiding `:db.type` mismatch errors. Non-numeric values and
+  types pass through unchanged. (PLAN #9)
+- **`::dlo/wrap-resolve` on identity resolvers** — the previously-declared
+  `::dlo/wrap-resolve` attribute option is now covered by tests confirming it
+  wraps the generated id-resolver for custom pre/post processing
+  (`(fn [resolve]) => (fn [env input])`). (PLAN #5)
+- **Schema verification (`schema-problems` / `verify-schema!`)** — new functions
+  (re-exported from the `datalevin` facade) compare the RAD-derived expected
+  schema against the live Datalevin schema of a connection. `schema-problems`
+  returns `:missing` and `:mismatch` problem maps for the adapter-managed keys
+  (`:db/valueType`, `:db/cardinality`, `:db/unique`); `verify-schema!` throws
+  `ex-info` when problems exist and returns `true` otherwise. (PLAN #8)
+
 #### Database-Side Validation & Post-Conditions (Datalevin 1.0.0)
 - **NEW: Attribute predicates via native `:db.attr/preds`** — declare
   database-enforced validation on an attribute by adding `:db.attr/preds` to its
