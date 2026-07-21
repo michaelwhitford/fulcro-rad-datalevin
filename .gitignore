@@ -12,7 +12,9 @@ classes/
 .vscode/
 .calva/
 .lsp/
-.clj-kondo/
+# Track .clj-kondo/config.edn and hooks; ignore generated cache/imports.
+.clj-kondo/.cache/
+.clj-kondo/imports/
 
 # OS
 .DS_Store

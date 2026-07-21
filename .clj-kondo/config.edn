@@ -1,0 +1,3 @@
+{:hooks {:analyze-call {us.whitford.fulcro.rad.database-adapters.test-utils/with-test-conn hooks.test-utils/with-test-conn
+                       us.whitford.fulcro.rad.database-adapters.test-utils/with-test-conn-attrs hooks.test-utils/with-test-conn-attrs
+                       datalevin.core/with-transaction hooks.datalevin/with-transaction}}}
