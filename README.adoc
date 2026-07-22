@@ -6,7 +6,9 @@ A database adapter plugin for https://fulcro.fulcrologic.com/[Fulcro RAD] that p
 
 * Automatic schema generation from RAD attributes
 * Save and delete middleware for RAD forms
-* Automatic Pathom3 resolver generation (id-resolvers and all-ids resolvers)
+* Works with *both Pathom 2 and Pathom 3* — the adapter has no hard dependency on either; you bring your own
+* Automatic resolver generation (id-resolvers and all-ids resolvers)
+* Read-your-writes: a form save's mutation returns the just-saved entity within the same request
 * Support for all RAD attribute types, including `:enum` and `:vec` (vector / HNSW index)
 * Native `:db/id` identity support (`::dlo/native-id?`)
 * Connection and database management utilities
@@ -36,6 +38,12 @@ Or use a local checkout:
 ----
 {:deps {us.whitford/fulcro-rad-datalevin {:local/root "/path/to/fulcro-rad-datalevin"}}}
 ----
+
+NOTE: This library does *not* bundle Pathom. Add the Pathom version your app
+uses to your own `deps.edn` — `com.wsscode/pathom` (Pathom 2) or
+`com.wsscode/pathom3` (Pathom 3). `generate-resolvers` returns Pathom-2-shape
+resolver maps, which work directly in a Pathom 2 parser and are auto-converted
+by RAD's Pathom 3 processor (see <<pathom-setup>>).
 
 == Quick Start
 
@@ -119,15 +127,33 @@ resolvers do this mapping for you and return the plain keyword (`:account.role/a
   (reset! connections {}))
 ----
 
+[[pathom-setup]]
 === 3. Configure Pathom Parser
+
+The adapter works with *both Pathom 2 and Pathom 3*. `generate-resolvers`
+returns Pathom-2-shape resolver maps (plain data, no Pathom dependency needed to
+build them); they register directly in a Pathom 2 parser and are auto-converted
+by RAD's Pathom 3 processor.
+
+Two pieces wire the adapter into the parser env, per Pathom version:
+
+* *Pathom 2*: `dl/pathom-plugin` — a `::p/wrap-parser` plugin.
+* *Pathom 3*: `dl/wrap-env` — an `(fn [env] env')` you compose into the
+  processor's `env-middleware`.
+
+Both inject `::dlo/connections` and the atom-backed `::dlo/databases` snapshot
+into the env (see <<Read-your-writes>>).
+
+==== Pathom 2
 
 [source,clojure]
 ----
 (ns com.example.components.parser
   (:require
+    [com.fulcrologic.rad.attributes :as attr]
+    [com.fulcrologic.rad.form :as form]
+    [com.fulcrologic.rad.pathom :as pathom]           ;; you provide com.wsscode/pathom
     [us.whitford.fulcro.rad.database-adapters.datalevin :as dl]
-    [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]
-    [com.wsscode.pathom3.connect.indexes :as pci]
     [com.example.model.account :as account]
     [com.example.components.database :as db]))
 
@@ -136,22 +162,52 @@ resolvers do this mapping for you and return the plain keyword (`:account.role/a
                ;; other model attributes
                )))
 
-;; Generate resolvers for a specific schema (schema arg is required)
-(def auto-resolvers
-  (dl/generate-resolvers all-attributes :main))
+(def parser
+  (pathom/new-parser {}
+    [(attr/pathom-plugin all-attributes)
+     (form/pathom-plugin (dl/wrap-datalevin-save) (dl/wrap-datalevin-delete))
+     ;; dl/pathom-plugin takes a (fn [env]) returning the schema -> connection map
+     (dl/pathom-plugin (fn [_env] @db/connections))]
+    ;; generate-resolvers returns Pathom-2-shape maps; add RAD's form mutations
+    [(dl/generate-resolvers all-attributes :main)
+     form/resolvers]))
 
-(def indexes
-  (pci/register
-    (concat
-      auto-resolvers
-      ;; custom resolvers
-      )))
-
-;; The pathom-plugin injects ::dlo/connections and ::dlo/databases into the env.
-;; It takes a function that returns the schema -> connection map.
-(def pathom-plugins
-  [(dl/pathom-plugin (fn [_env] @db/connections))])
+;; Run a query: (parser {} [{[:account/id id] [:account/name]}])
 ----
+
+==== Pathom 3
+
+[source,clojure]
+----
+(ns com.example.components.parser
+  (:require
+    [com.fulcrologic.rad.attributes :as attr]
+    [com.fulcrologic.rad.form :as form]
+    [com.fulcrologic.rad.pathom3 :as pathom3]          ;; you provide com.wsscode/pathom3
+    [us.whitford.fulcro.rad.database-adapters.datalevin :as dl]
+    [com.example.model.account :as account]
+    [com.example.components.database :as db]))
+
+(def all-attributes (vec (concat account/attributes)))
+
+(def processor
+  (pathom3/new-processor {}
+    ;; env-middleware: compose attr, form, and the adapter's wrap-env
+    (-> (attr/wrap-env all-attributes)
+        (form/wrap-env (dl/wrap-datalevin-save) (dl/wrap-datalevin-delete))
+        (dl/wrap-env (fn [_env] @db/connections)))
+    []                                                 ;; extra Pathom 3 plugins
+    ;; new-processor auto-converts the Pathom-2-shape resolvers for you
+    [(dl/generate-resolvers all-attributes :main)
+     form/resolvers]))
+
+;; Run a query: (processor {} [{[:account/id id] [:account/name]}])
+----
+
+TIP: If you build a Pathom 3 index yourself (`pci/register`) instead of using
+`new-processor`, convert the resolvers first — either call
+`dl/generate-resolvers-pathom3` (native Pathom 3 records) or run RAD's
+`com.fulcrologic.rad.pathom3/convert-resolvers` on `generate-resolvers` output.
 
 === 4. Configure Form Middleware
 
@@ -289,11 +345,18 @@ helpers `with-test-conn` / `with-test-conn-attrs` and `mock-resolver-env` in
 
 === Resolver Generation
 
-`generate-resolvers`:: Generate Pathom3 resolvers from attributes for a schema (schema arg required). Produces an id-resolver and an all-ids resolver per identity.
+`generate-resolvers`:: Generate resolvers from attributes for a schema (schema arg required). Produces an id-resolver and an all-ids resolver per identity. Returns *Pathom-2-shape resolver maps* (plain data keyed by `:com.wsscode.pathom.connect/{sym,input,output,batch?,resolve}`) — these register directly in a Pathom 2 parser and are auto-converted by RAD's Pathom 3 `new-processor`.
 +
 [source,clojure]
 ----
 (def resolvers (dl/generate-resolvers all-attributes :main))
+----
+
+`generate-resolvers-pathom3`:: Like `generate-resolvers`, but returns native Pathom 3 resolver records. Use only when you build a Pathom 3 index directly (e.g. `pci/register`) rather than via `new-processor`. Pathom 3 is resolved lazily at call time, so it stays optional.
++
+[source,clojure]
+----
+(def resolvers (dl/generate-resolvers-pathom3 all-attributes :main))
 ----
 
 `get-by-ids`:: Fetch multiple entities by their identity attribute values
@@ -308,16 +371,40 @@ Native-id helpers: `native-id?`, `pathom-query->datalevin-query`,
 `datalevin-result->pathom-result` support attributes that map onto Datalevin's
 internal `:db/id` (see `::dlo/native-id?`).
 
-=== Pathom3 Integration
+=== Pathom Integration
 
-`pathom-plugin`:: Create a Pathom3 plugin that injects `::dlo/connections` and `::dlo/databases` into the resolver env. Pass a `(fn [env])` returning the schema -> connection map.
+The adapter is Pathom-version-agnostic. Use `pathom-plugin` for Pathom 2 and
+`wrap-env` for Pathom 3; both inject `::dlo/connections` and the atom-backed
+`::dlo/databases` snapshot into the env. See <<pathom-setup>> for full wiring.
+
+`pathom-plugin`:: Create a *Pathom 2* plugin (a `:com.wsscode.pathom.core/wrap-parser` map) that injects `::dlo/connections` and `::dlo/databases` into the parse env. Pass a `(fn [env])` returning the schema -> connection map.
 +
 [source,clojure]
 ----
 (dl/pathom-plugin (fn [_env] @connections))
 ----
 
-`wrap-env`:: Lower-level env wiring used by `pathom-plugin`.
+`wrap-env`:: The *Pathom 3* integration point: an `(fn [env] env')` that injects `::dlo/connections` and `::dlo/databases`. Compose it into the `env-middleware` you pass to RAD's `new-processor` (it also underlies the Pathom 2 `pathom-plugin`).
++
+[source,clojure]
+----
+(-> (attr/wrap-env all-attributes)
+    (form/wrap-env save-mw delete-mw)
+    (dl/wrap-env (fn [_env] @connections)))
+----
+
+[[Read-your-writes]]
+=== Read-your-writes
+
+`::dlo/databases` holds `{schema -> atom<db>}` — an *atom* per schema, seeded by
+`pathom-plugin` / `wrap-env` at the start of each request. After a successful
+save or delete, the middleware publishes the transaction report's `:db-after`
+into the relevant atom, so resolvers that run later in the *same* Pathom request
+see the write. In practice this means a `form/save-form` mutation returns the
+just-saved (or updated) entity, not only its `:tempids` — matching the Datomic
+and XTDB adapters. This uses Datalevin's native `:db-after` for read-your-writes
+plus request-scoped snapshot consistency. Resolvers deref the snapshot leniently,
+so a bare `db` value in a hand-built env still works.
 
 === Query Utilities
 
@@ -357,9 +444,10 @@ The `datalevin-options` namespace (`::dlo/*`) provides configuration keys:
 ----
 (require '[us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo])
 
-;; Environment keys (injected by pathom-plugin)
+;; Environment keys (injected by pathom-plugin (Pathom 2) / wrap-env (Pathom 3))
 ::dlo/connections   ; Map of schema -> connection
-::dlo/databases     ; Map of schema -> current db value
+::dlo/databases     ; Map of schema -> atom<db> (per-request snapshot; save/delete
+                    ; publish :db-after here for read-your-writes)
 
 ;; Attribute-level options
 ::dlo/attribute-schema     ; Merge/override native Datalevin schema keys
@@ -574,7 +662,7 @@ clojure -X:deploy
       (save-mw/wrap-rewrite-values)))
 ----
 
-2. **Missing database connection** - Verify the Pathom env has `::dlo/connections` (the `pathom-plugin` injects this from the function you provide).
+2. **Missing database connection** - Verify the Pathom env has `::dlo/connections`. This is injected from the `(fn [env])` you provide to `dl/pathom-plugin` (Pathom 2) or `dl/wrap-env` (Pathom 3).
 
 3. **Schema mismatch** - Ensure each attribute's `::attr/schema` matches a key in your connections map:
 +
