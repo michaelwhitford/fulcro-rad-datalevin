@@ -196,6 +196,33 @@
   [attributes]
   (into {} (map (juxt ::attr/qualified-key identity)) attributes))
 
+;; ================================================================================
+;; Resolver Inspection Helpers
+;; ================================================================================
+;; `generate-resolvers` returns Pathom-2-shape resolver maps keyed by
+;; :com.wsscode.pathom.connect/{sym,input,output,resolve}. These helpers keep that
+;; shape knowledge in one place so tests don't hard-code the pathom keys.
+
+(defn resolver-input
+  "The ::pc/input set of a Pathom-2-shape resolver map (e.g. #{:account/id})."
+  [resolver]
+  (:com.wsscode.pathom.connect/input resolver))
+
+(defn resolver-output
+  "The ::pc/output of a Pathom-2-shape resolver map."
+  [resolver]
+  (:com.wsscode.pathom.connect/output resolver))
+
+(defn resolver-fn
+  "The ::pc/resolve function of a Pathom-2-shape resolver map."
+  [resolver]
+  (:com.wsscode.pathom.connect/resolve resolver))
+
+(defn resolver-for-input
+  "Find the resolver in `resolvers` whose ::pc/input set contains `id-key`."
+  [resolvers id-key]
+  (first (filter #(contains? (resolver-input %) id-key) resolvers)))
+
 (defn cleanup-path
   "Cleanup a directory path by recursively deleting all files."
   [path]

@@ -7,7 +7,6 @@
    [com.fulcrologic.guardrails.core :refer [>defn => ?]]
    [com.fulcrologic.rad.attributes :as attr]
    [com.fulcrologic.rad.authorization :as auth]
-   [com.wsscode.pathom3.connect.operation :as pco]
    [datalevin.core :as d]
    [edn-query-language.core :as eql]
    [taoensso.encore :as enc]
@@ -252,12 +251,14 @@
                            core-resolver)]
       (log/debug "Computed output is" outputs)
       (log/debug "Datalevin pull pattern is" datalevin-pull)
-      (pco/resolver
-       resolve-sym
-       {::pco/input  [qualified-key]
-        ::pco/output outputs
-        ::pco/batch? true}
-       final-resolver))
+      ;; Emit a Pathom-2-shape resolver map (plain data — no pathom dependency
+      ;; needed to construct). Works directly in a Pathom 2 parser and is
+      ;; auto-converted by RAD's Pathom 3 processor. See generate-resolvers.
+      {:com.wsscode.pathom.connect/sym     resolve-sym
+       :com.wsscode.pathom.connect/input   #{qualified-key}
+       :com.wsscode.pathom.connect/output  outputs
+       :com.wsscode.pathom.connect/batch?  true
+       :com.wsscode.pathom.connect/resolve final-resolver})
     (do
       (log/error "Unable to generate id-resolver. "
                  "Attribute was missing schema, or could not be found: " qualified-key)
@@ -294,9 +295,9 @@
                              ::attr/qualified-key))]
     (log/info "Building all-ids resolver for" qualified-key "->" all-ids-key
               (when is-native-id? (str "(native-id, using " sample-attr " for query)")))
-    (pco/resolver
-     (symbol (str entity-ns "-all-resolver"))
-     {::pco/output [{all-ids-key [qualified-key]}]}
+    {:com.wsscode.pathom.connect/sym    (symbol (str entity-ns "-all-resolver"))
+     :com.wsscode.pathom.connect/output [{all-ids-key [qualified-key]}]
+     :com.wsscode.pathom.connect/resolve
      (fn [{::dlo/keys [databases] :as env} _input]
        (let [db (get databases schema)]
          (if is-native-id?
@@ -319,11 +320,21 @@
                                   :where [?e ?id-attr ?id]]
                                 db qualified-key)
                  ids (mapv (fn [[id]] {qualified-key id}) result)]
-             {all-ids-key ids})))))))
+             {all-ids-key ids}))))}))
 
 (>defn generate-resolvers
   "Generate all of the resolvers that make sense for the given database config. This should be passed
   to your Pathom parser to register resolvers for each of your schemas.
+
+   Returns **Pathom-2-shape resolver maps** (plain data keyed by
+   `:com.wsscode.pathom.connect/{sym,input,output,batch?,resolve}`). This makes
+   the adapter Pathom-version-agnostic and free of any hard pathom dependency:
+
+   - **Pathom 2**: register the returned maps directly with your parser.
+   - **Pathom 3**: RAD's `com.fulcrologic.rad.pathom3/new-processor` already runs
+     `convert-resolvers` on whatever you pass it, so these maps auto-convert. If
+     you build a Pathom 3 index yourself, use `generate-resolvers-pathom3` (or
+     RAD's `convert-resolvers`) to get native Pathom 3 resolver records.
 
    Generates two types of resolvers:
    1. ID resolvers: resolve entity data by ID (e.g., :account/id -> account data)
@@ -354,3 +365,19 @@
         ;; Generate all-IDs resolvers (all entities of a type)
         all-ids-resolvers (mapv (partial all-ids-resolver attributes) identity-attributes)]
     (concat entity-resolvers all-ids-resolvers)))
+
+(defn generate-resolvers-pathom3
+  "Like `generate-resolvers`, but returns native **Pathom 3** resolver records
+   instead of Pathom-2-shape maps.
+
+   Convenience for callers that build a Pathom 3 index directly (rather than via
+   RAD's `new-processor`, which already converts). The conversion is delegated to
+   RAD's own `com.fulcrologic.rad.pathom3/convert-resolvers`, resolved lazily at
+   call time via `requiring-resolve` so that **pathom3 remains an optional,
+   runtime-only dependency** — this namespace never requires it at load time.
+
+   Throws if pathom3 (and thus `com.fulcrologic.rad.pathom3`) is not on the
+   classpath."
+  [attributes schema]
+  (let [convert (requiring-resolve 'com.fulcrologic.rad.pathom3/convert-resolvers)]
+    (convert (generate-resolvers attributes schema))))

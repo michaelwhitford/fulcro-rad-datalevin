@@ -15,6 +15,27 @@ Build/test: `clojure -M:run-tests` (kaocha). Focus one ns:
 
 ## Now
 
+**Dual Pathom 2/3 support (mirror datomic/xtdb)** — the adapter is now
+Pathom-version-agnostic with **zero hard pathom dependency**. Verified: main
+namespaces load with pathom3 fully absent from the classpath.
+- `generate-resolvers` emits **Pathom-2-shape maps** (`:com.wsscode.pathom.connect/{sym,input,output,batch?,resolve}`,
+  plain data). Works in a P2 parser directly; RAD's P3 `new-processor` runs
+  `convert-resolvers` so P3 apps need no changes (batching survives — verified in
+  `resolvers-convert-to-pathom3`).
+- `generate-resolvers-pathom3` — native P3 records via lazy
+  `(requiring-resolve 'com.fulcrologic.rad.pathom3/convert-resolvers)`.
+- `pathom-plugin` repurposed to **Pathom 2 `::p/wrap-parser`**; `wrap-env` is the
+  P3 env-middleware path (unchanged). BREAKING for old P3 `pathom-plugin` users.
+- `pathom3` moved from `:deps` to `:test`/`:run-tests` aliases only.
+- Test-shape knowledge centralized in `test_utils` helpers (`resolver-input`,
+  `resolver-output`, `resolver-fn`, `resolver-for-input`).
+- Reference patterns live at `~/src/fulcro-rad-datomic` (P2-default + separate
+  `generate-resolvers-pathom3` via `lazy-invoke`) and `~/src/fulcro-rad-xtdb`
+  (P2-only). Key enabler: RAD `pathom2->pathom3` maps `::pc/batch? → ::pco/batch?`.
+- Suite: **57 tests, 268 assertions, 0 failures**; lint 0 warnings.
+
+Before that:
+
 **Salvaged early-gen PR test** — merged PR #5 added `save_form_integration_test.clj`
 (407 lines) written against a defunct adapter contract (`attr/attributes-by-name`
 compile error; `wrap-datalevin-save`/`-delete` called with an options map — no such
@@ -23,7 +44,7 @@ It was ~90% redundant with `datalevin_test.clj`'s save coverage. Ported the two
 genuinely-unique cases into `datalevin_test.clj` (to-many `:account/items` ref save;
 save→resolve round-trip) using the current contract, then deleted the old file.
 Confirmed empirically: the adapter **does** persist to-many `:ref` delta saves via
-lookup-ref idents. Suite now **54 tests, 256 assertions, 0 failures**; lint 0 warnings.
+lookup-ref idents. Suite then 54 tests, 256 assertions (now 57/268 after dual-Pathom work).
 
 
 

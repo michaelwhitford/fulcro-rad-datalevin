@@ -5,16 +5,22 @@
            com.fulcrologic/fulcro-rad {:mvn/version "1.6.24"}
            com.fulcrologic/guardrails {:mvn/version "1.3.3"}
            datalevin/datalevin        {:mvn/version "1.0.0"}
-           com.wsscode/pathom3        {:mvn/version "2025.01.16-alpha"}
            edn-query-language/eql     {:mvn/version "2025.09.27"}
            com.taoensso/timbre        {:mvn/version "6.8.0"}
            com.taoensso/encore        {:mvn/version "3.169.1"}}
 
+ ;; Pathom is intentionally NOT a hard dependency of this library. The adapter
+ ;; emits Pathom-2-shape resolver maps (plain data, no pathom required to build),
+ ;; which work directly in a Pathom 2 parser and are auto-converted by RAD's
+ ;; Pathom 3 processor. pathom3 is a test-only dependency, used to exercise the
+ ;; P2->P3 conversion path. See generate-resolvers / generate-resolvers-pathom3.
  :aliases {:test    {:extra-paths ["src/test"]
-                     :extra-deps  {fulcrologic/fulcro-spec {:mvn/version "3.2.10"}}}
+                     :extra-deps  {fulcrologic/fulcro-spec {:mvn/version "3.2.10"}
+                                   com.wsscode/pathom3     {:mvn/version "2025.01.16-alpha"}}}
 
            :run-tests {:extra-paths ["src/test"]
-                       :extra-deps {lambdaisland/kaocha {:mvn/version "1.91.1392"}}
+                       :extra-deps {lambdaisland/kaocha  {:mvn/version "1.91.1392"}
+                                    com.wsscode/pathom3  {:mvn/version "2025.01.16-alpha"}}
                        :jvm-opts ["--enable-native-access=ALL-UNNAMED"]
                        :main-opts ["-m" "kaocha.runner"]}
 

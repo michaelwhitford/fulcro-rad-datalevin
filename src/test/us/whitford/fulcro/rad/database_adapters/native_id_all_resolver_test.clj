@@ -11,7 +11,6 @@
    [clojure.test :refer [deftest testing is]]
    [com.fulcrologic.rad.attributes :as attr]
    [com.fulcrologic.rad.ids :refer [new-uuid]]
-   [com.wsscode.pathom3.connect.operation :as pco]
    [datalevin.core :as d]
    [us.whitford.fulcro.rad.database-adapters.datalevin :as dl]
    [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]
@@ -42,14 +41,14 @@
       ;; Generate resolvers
       (let [resolvers (dl/generate-resolvers (concat tu/native-id-attributes tu/all-test-attributes) :native-test)
             ;; Find person-all resolver
-            person-all-resolver (first (filter #(let [output (::pco/output (:config %))]
+            person-all-resolver (first (filter #(let [output (tu/resolver-output %)]
                                                   (and (vector? output)
                                                        (map? (first output))
                                                        (contains? (first output) :person/all)))
                                                resolvers))
             env (assoc (tu/mock-resolver-env {:native-test conn})
                        ::attr/key->attribute (tu/key->attribute-map (concat tu/native-id-attributes tu/all-test-attributes)))
-            result ((:resolve person-all-resolver) env {})]
+            result ((tu/resolver-fn person-all-resolver) env {})]
         
         (is (some? person-all-resolver) "Should find person-all resolver")
         (is (contains? result :person/all) "Result should have :person/all key")
@@ -76,20 +75,20 @@
       
       ;; Generate resolvers
       (let [resolvers (dl/generate-resolvers tu/native-id-attributes :native-test)
-            person-all-resolver (first (filter #(let [output (::pco/output (:config %))]
+            person-all-resolver (first (filter #(let [output (tu/resolver-output %)]
                                                   (and (vector? output)
                                                        (map? (first output))
                                                        (contains? (first output) :person/all)))
                                                resolvers))
-            person-id-resolver (first (filter #(= :person/id (first (::pco/input (:config %))))
+            person-id-resolver (first (filter #(= :person/id (first (tu/resolver-input %)))
                                               resolvers))
             env (assoc (tu/mock-resolver-env {:native-test conn})
                        ::attr/key->attribute (tu/key->attribute-map tu/native-id-attributes))
             ;; Get all person IDs
-            all-result ((:resolve person-all-resolver) env {})
+            all-result ((tu/resolver-fn person-all-resolver) env {})
             person-ids (map :person/id (:person/all all-result))
             ;; Batch resolve full person data
-            persons ((:resolve person-id-resolver) env (mapv #(hash-map :person/id %) person-ids))]
+            persons ((tu/resolver-fn person-id-resolver) env (mapv #(hash-map :person/id %) person-ids))]
         
         (is (= 2 (count persons)) "Should have 2 persons")
         
@@ -115,7 +114,7 @@
                           ::dlo/native-id?      true}]
           resolvers (dl/generate-resolvers minimal-attrs :minimal)
           ;; Should generate all-ids resolver even with no sample attribute
-          minimal-all (first (filter #(let [output (::pco/output (:config %))]
+          minimal-all (first (filter #(let [output (tu/resolver-output %)]
                                         (and (vector? output)
                                              (map? (first output))
                                              (contains? (first output) :minimal/all)))
@@ -126,7 +125,7 @@
       ;; Resolver should return empty list (with warning logged)
       (let [env (assoc (tu/mock-resolver-env {})
                        ::attr/key->attribute (tu/key->attribute-map minimal-attrs))
-            result ((:resolve minimal-all) env {})]
+            result ((tu/resolver-fn minimal-all) env {})]
         (is (contains? result :minimal/all))
         (is (empty? (:minimal/all result)) "Should return empty list when no sample attribute found")))))
 
@@ -141,14 +140,14 @@
                          {:person/email "frank@test.com" :person/bio "No name"}])
       
       (let [resolvers (dl/generate-resolvers tu/native-id-attributes :native-test)
-            person-all-resolver (first (filter #(let [output (::pco/output (:config %))]
+            person-all-resolver (first (filter #(let [output (tu/resolver-output %)]
                                                   (and (vector? output)
                                                        (map? (first output))
                                                        (contains? (first output) :person/all)))
                                                resolvers))
             env (assoc (tu/mock-resolver-env {:native-test conn})
                        ::attr/key->attribute (tu/key->attribute-map tu/native-id-attributes))
-            result ((:resolve person-all-resolver) env {})
+            result ((tu/resolver-fn person-all-resolver) env {})
             n (count (:person/all result))]
         ;; If querying by :person/name, would only find Eve
         ;; If querying by any attribute (correct), would find both

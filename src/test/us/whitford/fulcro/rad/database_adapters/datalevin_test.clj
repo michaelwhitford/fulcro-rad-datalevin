@@ -6,6 +6,7 @@
    [com.fulcrologic.rad.attributes :as attr]
    [com.fulcrologic.rad.form :as form]
    [com.fulcrologic.rad.ids :refer [new-uuid]]
+   [com.fulcrologic.rad.pathom3 :as rad-p3]
    [com.wsscode.pathom3.connect.operation :as pco]
    [datalevin.core :as d]
    [us.whitford.fulcro.rad.database-adapters.datalevin :as dl]
@@ -122,14 +123,14 @@
   (testing "generates resolvers for schema"
     (let [resolvers (dl/generate-resolvers tu/all-test-attributes :test)]
       (is (seq resolvers))
-      (is (some #(= :account/id (first (::pco/input (:config %)))) resolvers))
-      (is (some #(= :item/id (first (::pco/input (:config %)))) resolvers))))
+      (is (some #(= :account/id (first (tu/resolver-input %))) resolvers))
+      (is (some #(= :item/id (first (tu/resolver-input %))) resolvers))))
 
   (testing "generated resolvers have correct output"
     (let [resolvers    (dl/generate-resolvers tu/all-test-attributes :test)
-          account-res  (first (filter #(= :account/id (first (::pco/input (:config %))))
+          account-res  (first (filter #(= :account/id (first (tu/resolver-input %)))
                                       resolvers))
-          outputs      (::pco/output (:config account-res))]
+          outputs      (tu/resolver-output account-res)]
       (is (some? account-res))
       (is (contains? (set outputs) :account/name))
       (is (contains? (set outputs) :account/email))
@@ -152,7 +153,7 @@
             resolvers (dl/generate-resolvers tu/all-test-attributes :test)
             ;; Find resolver by checking if output is a vector (all-ids resolvers have vector output)
             ;; and contains the :account/all key
-            all-accts (first (filter #(let [output (::pco/output (:config %))]
+            all-accts (first (filter #(let [output (tu/resolver-output %)]
                                         (and (vector? output)
                                              (map? (first output))
                                              (contains? (first output) :account/all)))
@@ -161,12 +162,48 @@
         (when all-accts
           (let [env    (assoc (tu/mock-resolver-env {:test conn})
                               ::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes))
-                result ((:resolve all-accts) env {})]
+                result ((tu/resolver-fn all-accts) env {})]
             (is (some? result))
             (is (contains? result :account/all))
             (is (= 2 (count (:account/all result))))
             (is (every? #(contains? % :account/id) (:account/all result)))
             (is (= (set [id1 id2]) (set (map :account/id (:account/all result)))))))))))
+
+(deftest resolvers-are-pathom2-shape
+  (testing "generate-resolvers returns Pathom-2-shape maps (no hard pathom dep)"
+    (let [resolvers (dl/generate-resolvers tu/all-test-attributes :test)
+          account   (tu/resolver-for-input resolvers :account/id)]
+      (is (every? map? resolvers) "P2 resolvers are plain maps, not records")
+      (is (some? account))
+      (is (set? (tu/resolver-input account)) "::pc/input is a set")
+      (is (contains? (tu/resolver-input account) :account/id))
+      (is (true? (:com.wsscode.pathom.connect/batch? account)) "id-resolver is batched")
+      (is (fn? (tu/resolver-fn account)) "::pc/resolve is a function"))))
+
+(deftest resolvers-convert-to-pathom3
+  (testing "RAD's convert-resolvers upconverts our P2 maps to working P3 records"
+    (tu/with-test-conn [conn]
+      (let [id        (new-uuid)
+            _         (d/transact! conn [{:account/id id :account/name "Ada"}])
+            p2        (dl/generate-resolvers tu/all-test-attributes :test)
+            converted (rad-p3/convert-resolvers p2)
+            ;; native P3 resolvers expose their config under :config with ::pco keys
+            account   (first (filter #(= :account/id (first (::pco/input (:config %)))) converted))
+            env       (assoc (tu/mock-resolver-env {:test conn})
+                             ::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes))]
+        (is (= (count p2) (count converted)) "conversion preserves resolver count")
+        (is (some? account) "converted P3 resolver is addressable by ::pco/input")
+        (is (true? (::pco/batch? (:config account))) "batching survives conversion")
+        (is (= "Ada" (:account/name (first ((:resolve account) env [{:account/id id}]))))
+            "converted P3 resolver actually resolves data")))))
+
+;; Convenience path: generate-resolvers-pathom3 yields the same native records.
+(deftest generate-resolvers-pathom3-smoke
+  (testing "generate-resolvers-pathom3 returns native P3 resolver records"
+    (let [p3      (dl/generate-resolvers-pathom3 tu/all-test-attributes :test)
+          account (first (filter #(= :account/id (first (::pco/input (:config %)))) p3))]
+      (is (some? account))
+      (is (= :account/id (first (::pco/input (:config account))))))))
 
 ;; ================================================================================
 ;; Query Utility Tests
@@ -362,13 +399,13 @@
             _                (d/transact! conn [{:account/id   id
                                                  :account/name "Before Save"}])
             resolvers        (dl/generate-resolvers tu/all-test-attributes :test)
-            account-resolver (first (filter #(= :account/id (first (::pco/input (:config %))))
+            account-resolver (first (filter #(= :account/id (first (tu/resolver-input %)))
                                             resolvers))
             resolve-name     (fn []
                                (let [env (assoc (tu/mock-resolver-env {:test conn})
                                                 ::attr/key->attribute
                                                 (tu/key->attribute-map tu/all-test-attributes))]
-                                 (:account/name (first ((:resolve account-resolver) env [{:account/id id}])))))
+                                 (:account/name (first ((tu/resolver-fn account-resolver) env [{:account/id id}])))))
             _                (is (= "Before Save" (resolve-name))
                                  "Resolver returns the seeded value before save")
             delta            {[:account/id id] {:account/name {:before "Before Save"
@@ -545,7 +582,8 @@
       (let [database-mapper (fn [_env] {:test conn})
             plugin          (dl/pathom-plugin database-mapper)]
         (is (map? plugin))
-        (is (contains? plugin :com.wsscode.pathom3.connect.runner/wrap-root-run))))))
+        (is (contains? plugin :com.wsscode.pathom.core/wrap-parser)
+            "pathom-plugin is a Pathom 2 ::wrap-parser plugin")))))
 
 ;; ================================================================================
 ;; Multiple Schema Tests
@@ -809,11 +847,11 @@
                                           :account/name "Grace"
                                           :account/role :account.role/admin}])
             resolvers (dl/generate-resolvers tu/all-test-attributes :test)
-            account-resolver (first (filter #(= :account/id (first (::pco/input (:config %))))
+            account-resolver (first (filter #(= :account/id (first (tu/resolver-input %)))
                                             resolvers))
             env       (assoc (tu/mock-resolver-env {:test conn})
                              ::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes))
-            results   ((:resolve account-resolver) env [{:account/id id}])
+            results   ((tu/resolver-fn account-resolver) env [{:account/id id}])
             result    (first results)]
         (is (some? result) (str "Result should not be nil. Got results: " (pr-str results)))
         (is (= id (:account/id result)) (str "Expected account/id to be " id " but got: " (pr-str result)))
@@ -831,11 +869,11 @@
                                           :account/permissions [:account.permissions/read
                                                                 :account.permissions/write]}])
             resolvers (dl/generate-resolvers tu/all-test-attributes :test)
-            account-resolver (first (filter #(= :account/id (first (::pco/input (:config %))))
+            account-resolver (first (filter #(= :account/id (first (tu/resolver-input %)))
                                             resolvers))
             env       (assoc (tu/mock-resolver-env {:test conn})
                              ::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes))
-            result    (first ((:resolve account-resolver) env [{:account/id id}]))
+            result    (first ((tu/resolver-fn account-resolver) env [{:account/id id}]))
             perms     (:account/permissions result)]
         (is (some? result))
         (is (= id (:account/id result)))
@@ -906,7 +944,7 @@
       ;; Should have an ID resolver and an all-IDs resolver
       (is (>= (count resolvers) 1) "Should generate at least one resolver")
       ;; Find the ID resolver
-      (let [id-resolver (first (filter #(= :person/id (first (::pco/input (:config %))))
+      (let [id-resolver (first (filter #(= :person/id (first (tu/resolver-input %)))
                                        resolvers))]
         (is (some? id-resolver) "Should have an ID resolver for :person/id"))))
 
@@ -921,12 +959,12 @@
             eid (ffirst (d/q '[:find ?e :where [?e :person/name "Bob"]] db))
             ;; Generate resolvers and run query
             resolvers (dl/generate-resolvers tu/native-id-attributes :native-test)
-            person-resolver (first (filter #(= :person/id (first (::pco/input (:config %))))
+            person-resolver (first (filter #(= :person/id (first (tu/resolver-input %)))
                                            resolvers))
             env (assoc (tu/mock-resolver-env {:native-test conn})
                        ::attr/key->attribute (tu/key->attribute-map tu/native-id-attributes))
             ;; Query using the native entity ID
-            result (first ((:resolve person-resolver) env [{:person/id eid}]))]
+            result (first ((tu/resolver-fn person-resolver) env [{:person/id eid}]))]
         (is (some? result) "Resolver should return a result")
         ;; The result should have :person/id mapped from :db/id
         (is (= eid (:person/id result)) 

@@ -9,7 +9,6 @@
    [com.fulcrologic.rad.attributes :as attr]
    [com.fulcrologic.rad.form :as form]
    [com.fulcrologic.rad.ids :refer [new-uuid]]
-   [com.wsscode.pathom3.connect.operation :as pco]
    [datalevin.core :as d]
    [us.whitford.fulcro.rad.database-adapters.datalevin :as dl]
    [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]
@@ -162,7 +161,7 @@
 (defn- id-resolver-for
   "Find the generated id-resolver whose input is [id-key]."
   [resolvers id-key]
-  (first (filter #(= id-key (first (::pco/input (:config %)))) resolvers)))
+  (first (filter #(= id-key (first (tu/resolver-input %))) resolvers)))
 
 (deftest wrap-resolve-applied-to-id-resolver
   (testing "::dlo/wrap-resolve wraps the identity resolver (pre + post processing)"
@@ -174,7 +173,7 @@
               r         (id-resolver-for resolvers :wrapped/id)
               env       (assoc (tu/mock-resolver-env {:test conn})
                                ::attr/key->attribute (tu/key->attribute-map wrapped-attributes))
-              result    ((:resolve r) env [{:wrapped/id id}])]
+              result    ((tu/resolver-fn r) env [{:wrapped/id id}])]
           (is (some? r) "id-resolver for :wrapped/id exists")
           (is (= 1 @wrap-calls) "the wrapper's pre-processing ran exactly once")
           (is (= "ALICE" (:wrapped/name (first result)))
@@ -191,7 +190,7 @@
               r          (id-resolver-for resolvers :wrapped/id)
               env        (assoc (tu/mock-resolver-env {:test conn})
                                 ::attr/key->attribute (tu/key->attribute-map ctrl-attrs))
-              result     ((:resolve r) env [{:wrapped/id id}])]
+              result     ((tu/resolver-fn r) env [{:wrapped/id id}])]
           (is (= "bob" (:wrapped/name (first result)))
               "no wrapper means the name is returned unchanged"))))))
 
@@ -269,12 +268,12 @@
         (d/transact! conn [{:account/id id1 :account/name "A"}
                            {:account/id id2 :account/name "B"}])
         (let [resolvers (dl/generate-resolvers tu/all-test-attributes :test)
-              r         (first (filter #(= :account/id (first (::pco/input (:config %)))) resolvers))
+              r         (first (filter #(= :account/id (first (tu/resolver-input %))) resolvers))
               env       (assoc (tu/mock-resolver-env {:test conn})
                                ::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
                                ::dlo/max-batch-size 1)]
           (is (thrown? clojure.lang.ExceptionInfo
-                       ((:resolve r) env [{:account/id id1} {:account/id id2}]))
+                       ((tu/resolver-fn r) env [{:account/id id1} {:account/id id2}]))
               "resolving more ids than max-batch-size throws"))))))
 
 (deftest transaction-timeout-aborts-slow-save

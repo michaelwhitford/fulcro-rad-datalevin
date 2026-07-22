@@ -46,19 +46,37 @@
   sd/verify-schema!)
 
 ;; Pathom integration
-(def pathom-plugin pp/pathom-plugin)
-(def wrap-env pp/wrap-env)
+;; The adapter is Pathom-version-agnostic. `pathom-plugin` is a Pathom 2
+;; ::wrap-parser plugin; `wrap-env` is the plain env augmentor to compose into a
+;; Pathom 3 processor's env-middleware. See datalevin.pathom-plugin.
+(def pathom-plugin
+  "Pathom 2 plugin that injects Datalevin connections/databases into the parse
+   env. For Pathom 3, use `wrap-env` instead. See datalevin.pathom-plugin."
+  pp/pathom-plugin)
+(def wrap-env
+  "Plain `(fn [env] env')` that adds Datalevin connections/databases to the env.
+   This is the Pathom 3 integration point (compose into env-middleware); it also
+   underlies the Pathom 2 `pathom-plugin`. See datalevin.pathom-plugin."
+  pp/wrap-env)
 
 ;; Resolver generation
 (def generate-resolvers
   "Generate all of the resolvers that make sense for the given database config.
-   
+
    Arguments:
    - attributes: collection of RAD attributes
    - schema: schema keyword (e.g., :main)
-   
-   Returns: sequence of Pathom3 resolvers"
+
+   Returns Pathom-2-shape resolver maps (plain data). These work directly in a
+   Pathom 2 parser and are auto-converted by RAD's Pathom 3 processor
+   (`new-processor` runs `convert-resolvers`). No hard pathom dependency is
+   required to build them. See generate-resolvers-pathom3 for native P3 records."
   gr/generate-resolvers)
+(def generate-resolvers-pathom3
+  "Like `generate-resolvers`, but returns native Pathom 3 resolver records.
+   Requires pathom3 on the classpath at call time (resolved lazily). Use only
+   when building a Pathom 3 index directly rather than via RAD's new-processor."
+  gr/generate-resolvers-pathom3)
 (def get-by-ids gr/get-by-ids)
 
 ;; Native ID helpers

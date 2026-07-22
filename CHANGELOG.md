@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Dual Pathom 2 / Pathom 3 Support (library is now Pathom-version-agnostic)
+- **The adapter no longer hard-depends on any Pathom version.** `pathom3` moved
+  out of `:deps` into the `:test`/`:run-tests` aliases only. The main namespaces
+  load with no Pathom library on the classpath.
+- **`generate-resolvers` now emits Pathom-2-shape resolver maps** (plain data
+  keyed by `:com.wsscode.pathom.connect/{sym,input,output,batch?,resolve}`). These
+  work directly in a Pathom 2 parser and are auto-converted by RAD's Pathom 3
+  processor (`new-processor` runs `convert-resolvers`), so **Pathom 3 apps need
+  no changes**. Batching survives the conversion.
+- **`generate-resolvers-pathom3`** — new convenience returning native Pathom 3
+  resolver records for callers that build a Pathom 3 index directly. Pathom 3 is
+  resolved lazily via `requiring-resolve` at call time, keeping it optional.
+- Mirrors the fulcro-rad-datomic / fulcro-rad-xtdb reference adapters.
+
 #### Connection Options & Write-Path Wiring (Datalevin 1.0.0)
 - **`:conn-opts` pass-through in `start-database!` / `start-databases`** — a
   database config may now supply a `:conn-opts` map of native Datalevin
@@ -32,6 +46,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was declared but ignored).
 
 ### Changed
+
+#### Pathom coupling (BREAKING for direct Pathom 3 users of the old plugin)
+- **`pathom-plugin` is now a Pathom 2 `::p/wrap-parser` plugin** (was a Pathom 3
+  `wrap-root-run` runner plugin). Pathom 3 apps should compose **`wrap-env`**
+  (unchanged `(fn [env] env')`) into their processor's `env-middleware` instead —
+  the idiomatic RAD Pathom 3 integration point.
+- **`generate-resolvers` return shape changed** from native Pathom 3 records to
+  Pathom-2-shape maps (see Added). Code that introspected `::pco/*` keys off the
+  returned resolvers must read `:com.wsscode.pathom.connect/*` instead (or call
+  `generate-resolvers-pathom3`).
+- `pathom3` is no longer a transitive dependency; consumers bring their own
+  Pathom (2 or 3).
 
 #### Dependencies
 - Clojure 1.12.4 → 1.12.5, Fulcro 3.9.3 → 3.9.5, Fulcro RAD 1.6.23 → 1.6.24,
