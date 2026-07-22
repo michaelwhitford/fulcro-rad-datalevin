@@ -54,6 +54,15 @@ upgrade** with capability surfacing complete.
 
 Suite: **52 tests, 251 assertions, 0 failures**. Lint: **0 warnings**.
 
+Deps bumped (post-knowledge-seeding): clojure 1.12.5, fulcro 3.9.5,
+fulcro-rad 1.6.24, guardrails 1.3.3, fulcro-spec 3.2.10, deps-deploy 0.2.5.
+Kondo note: `datalevin.core/with-transaction` is a runtime re-export
+(`import-macro`) → narrow `:unresolved-var` exclude in tracked
+`.clj-kondo/config.edn`; the warning only appears after regenerating the
+derived lint cache (CI does this). Also `:output {:exclude-files}` for
+`.clj-kondo/imports/` — derived third-party configs (e.g. guardrails 1.3.3
+hooks trip `redundant-str-call` in editors).
+
 ## Next
 
 **Full-text search** — see [knowledge/design/full-text-search.md](knowledge/design/full-text-search.md).

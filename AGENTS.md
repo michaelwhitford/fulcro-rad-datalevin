@@ -164,8 +164,8 @@ S5(identity) > S4(intelligence) > S3(control) > S2(coordination) > S1(operations
                   | .clj-kondo/ tracked(config + with-transaction hook) | imports/ gitignored(derived)
                   | CI: regenerate deps configs before lint | anchor: 0_warnings
 
-λ deps(x).        clojure -M:outdated | clojure 1.12.4 | fulcro 3.9.3 | fulcro-rad 1.6.23
-                  | datalevin 1.0.0 | pathom3 2025.01.16-alpha | guardrails 1.2.16
+λ deps(x).        clojure -M:outdated | clojure 1.12.5 | fulcro 3.9.5 | fulcro-rad 1.6.24
+                  | datalevin 1.0.0 | pathom3 2025.01.16-alpha | guardrails 1.3.3
                   | release: :jar → :install ∨ :deploy (depstar + deps-deploy)
 
 λ escalate(x).    ¬resolve(x) → surface(x) | ¬suppress(x) | ¬silent_choose(x)

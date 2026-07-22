@@ -33,6 +33,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+#### Dependencies
+- Clojure 1.12.4 → 1.12.5, Fulcro 3.9.3 → 3.9.5, Fulcro RAD 1.6.23 → 1.6.24,
+  Guardrails 1.2.16 → 1.3.3, fulcro-spec 3.2.6 → 3.2.10 (test),
+  deps-deploy 0.2.2 → 0.2.5 (release aliases). Full suite and lint green.
+- clj-kondo: narrow `:unresolved-var` exclude for
+  `datalevin.core/with-transaction` — Datalevin 1.0.0 re-exports it at runtime
+  via `import-macro`, which clj-kondo cannot statically resolve. Surfaced by
+  regenerating the derived lint cache; CI regeneration would hit it too.
+- clj-kondo: `:output {:exclude-files [".clj-kondo/imports/"]}` — imports/ is
+  derived third-party config regenerated from jars; guardrails 1.3.3 ships a
+  hook file that trips `redundant-str-call` in editors otherwise.
+
 #### Delete Middleware Parity
 - `delete-entity!` now resolves the entity via `d/entid` (raw id for native-id
   attributes, `[pk id]` lookup ref otherwise) instead of a manual `d/q`, and
