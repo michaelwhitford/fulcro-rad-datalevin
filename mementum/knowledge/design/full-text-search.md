@@ -1,3 +1,14 @@
+---
+type: Design
+title: Full-Text Search for fulcro-rad-datalevin
+status: open
+tags: [datalevin, full-text-search, rad, resolvers, pathom]
+related:
+  - ../../state.md
+  - ../../memories/list-ident-resolver-pattern.md
+  - ../../memories/native-keys-vs-first-class-option.md
+---
+
 # Design: Full-Text Search for fulcro-rad-datalevin
 
 > Status: **PROPOSED — not yet implemented.** Design frozen for pickup in a new
