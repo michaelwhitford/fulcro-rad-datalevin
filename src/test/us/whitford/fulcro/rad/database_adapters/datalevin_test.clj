@@ -322,6 +322,66 @@
         (is (nil? (:account/email entity)))))))
 
 ;; ================================================================================
+;; Save Integration Tests (salvaged from early-gen save_form_integration_test.clj)
+;; ================================================================================
+
+(deftest save-middleware-to-many-references
+  (testing "save persists a to-many :ref field as lookup-ref idents"
+    (tu/with-test-conn [conn]
+      (let [account-id (new-uuid)
+            item1-id   (new-uuid)
+            item2-id   (new-uuid)
+            _          (d/transact! conn [{:account/id   account-id
+                                           :account/name "Ref Account"}
+                                          {:item/id   item1-id
+                                           :item/name "Item 1"}
+                                          {:item/id   item2-id
+                                           :item/name "Item 2"}])
+            delta      {[:account/id account-id]
+                        {:account/items {:before []
+                                         :after  [[:item/id item1-id]
+                                                  [:item/id item2-id]]}}}
+            env        {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
+                        ::dlo/connections     {:test conn}
+                        ::form/params         {::form/delta delta}}
+            middleware (dl/wrap-datalevin-save)
+            _          (middleware env)
+            account    (d/pull (d/db conn)
+                               '[:account/id :account/name
+                                 {:account/items [:item/id :item/name]}]
+                               [:account/id account-id])
+            items      (:account/items account)]
+        (is (= 2 (count items)) "Both referenced items should be linked")
+        (is (some #(= item1-id (:item/id %)) items) "Item 1 should be linked")
+        (is (some #(= item2-id (:item/id %)) items) "Item 2 should be linked")))))
+
+(deftest save-then-resolve-round-trip
+  (testing "generated resolver returns updated data after a save via middleware"
+    (tu/with-test-conn [conn]
+      (let [id               (new-uuid)
+            _                (d/transact! conn [{:account/id   id
+                                                 :account/name "Before Save"}])
+            resolvers        (dl/generate-resolvers tu/all-test-attributes :test)
+            account-resolver (first (filter #(= :account/id (first (::pco/input (:config %))))
+                                            resolvers))
+            resolve-name     (fn []
+                               (let [env (assoc (tu/mock-resolver-env {:test conn})
+                                                ::attr/key->attribute
+                                                (tu/key->attribute-map tu/all-test-attributes))]
+                                 (:account/name (first ((:resolve account-resolver) env [{:account/id id}])))))
+            _                (is (= "Before Save" (resolve-name))
+                                 "Resolver returns the seeded value before save")
+            delta            {[:account/id id] {:account/name {:before "Before Save"
+                                                               :after  "After Save"}}}
+            env              {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
+                              ::dlo/connections     {:test conn}
+                              ::form/params         {::form/delta delta}}
+            middleware       (dl/wrap-datalevin-save)]
+        (middleware env)
+        (is (= "After Save" (resolve-name))
+            "Resolver returns updated value after save (save path ↔ query path coherence)")))))
+
+;; ================================================================================
 ;; Tempids Tests (CRITICAL - Fulcro RAD requires :tempids in all form operation results)
 ;; ================================================================================
 

@@ -15,6 +15,18 @@ Build/test: `clojure -M:run-tests` (kaocha). Focus one ns:
 
 ## Now
 
+**Salvaged early-gen PR test** — merged PR #5 added `save_form_integration_test.clj`
+(407 lines) written against a defunct adapter contract (`attr/attributes-by-name`
+compile error; `wrap-datalevin-save`/`-delete` called with an options map — no such
+arity; delta at top-level `::form/delta` instead of `::form/params → ::form/delta`).
+It was ~90% redundant with `datalevin_test.clj`'s save coverage. Ported the two
+genuinely-unique cases into `datalevin_test.clj` (to-many `:account/items` ref save;
+save→resolve round-trip) using the current contract, then deleted the old file.
+Confirmed empirically: the adapter **does** persist to-many `:ref` delta saves via
+lookup-ref idents. Suite now **54 tests, 256 assertions, 0 failures**; lint 0 warnings.
+
+
+
 **Upstream knowledge pages seeded** — 9 source-verified prose reference pages
 under `mementum/knowledge/upstream/{datalevin,fulcro-rad}/`, extracted from the
 clones at `~/src/datalevin` (1.0.0) and `~/src/fulcro-rad`. Indexed in
@@ -52,7 +64,7 @@ upgrade** with capability surfacing complete.
   test conns build full schema across all schemas; `.clj-kondo/` config+hooks now
   tracked (with-transaction hook).
 
-Suite: **52 tests, 251 assertions, 0 failures**. Lint: **0 warnings**.
+Suite: **54 tests, 256 assertions, 0 failures**. Lint: **0 warnings**.
 
 Deps bumped (post-knowledge-seeding): clojure 1.12.5, fulcro 3.9.5,
 fulcro-rad 1.6.24, guardrails 1.3.3, fulcro-spec 3.2.10, deps-deploy 0.2.5.
