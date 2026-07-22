@@ -15,13 +15,20 @@ Build/test: `clojure -M:run-tests` (kaocha). Focus one ns:
 
 ## Now
 
-**AGENTS.md converted to VSM lambda style** (anima-style: S5→S1 layers, lambda
-notation). The Mementum protocol lambdas are now **inlined in AGENTS.md**
-(S5 `λ mementum`/`λ termination`/`λ feed_forward`, S4 metabolism, S1
-`λ orient`/`λ recall`/`λ memory`); the vendored `MEMENTUM-LAMBDA.md` was
-deleted. First five memories committed. Prior to that we completed a
-**Datalevin 0.10.5 → 1.0.0 upgrade** and surfaced its capabilities through
-the adapter.
+**Upstream knowledge pages seeded** — 9 source-verified prose reference pages
+under `mementum/knowledge/upstream/{datalevin,fulcro-rad}/`, extracted from the
+clones at `~/src/datalevin` (1.0.0) and `~/src/fulcro-rad`. Indexed in
+`mementum/index.md`. Convention: **knowledge pages are prose, not lambda
+notation** (lambdas are for system prompts/policy only — human decision).
+
+Key finding encoded there (de-risks the full-text spike): both RAD parsers
+(Pathom 2 & 3) normalize EQL params into env under the plain `:query-params`
+key via `combined-query-params` — see
+[knowledge/upstream/fulcro-rad/resolvers-and-pathom.md](knowledge/upstream/fulcro-rad/resolvers-and-pathom.md).
+
+Before that: AGENTS.md converted to VSM lambda style with the Mementum
+protocol inlined; first five memories committed; **Datalevin 0.10.5 → 1.0.0
+upgrade** with capability surfacing complete.
 
 ## Recently done (Datalevin 1.0.0 wiring)
 
