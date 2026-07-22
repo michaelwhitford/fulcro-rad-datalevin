@@ -1,17 +1,23 @@
 = Fulcro RAD Datalevin
 
-A database adapter plugin for https://fulcro.fulcrologic.com/[Fulcro RAD] that provides support for https://github.com/juji-io/datalevin[Datalevin], an embedded Datalog database.
+A database adapter plugin for https://fulcro.fulcrologic.com/[Fulcro RAD] that provides support for https://github.com/juji-io/datalevin[Datalevin] (1.0.0), an embedded Datalog database.
 
 == Features
 
 * Automatic schema generation from RAD attributes
 * Save and delete middleware for RAD forms
-* Automatic Pathom3 resolver generation
-* Support for all RAD attribute types
+* Automatic Pathom3 resolver generation (id-resolvers and all-ids resolvers)
+* Support for all RAD attribute types, including `:enum` and `:vec` (vector / HNSW index)
+* Native `:db/id` identity support (`::dlo/native-id?`)
 * Connection and database management utilities
-* Testing utilities with automatic cleanup (`with-temp-database` macro)
-* Production-ready error handling with detailed context
-* Configurable safety limits (batch sizes, timeouts, retries)
+* Datalevin 1.0.0 capabilities surfaced through the adapter:
+** `:conn-opts` pass-through (`:auto-entity-time?`, `:validate-data?`, `:closed-schema?`, `:wal?`, `:search-domains`, …)
+** Database-side attribute predicates via native `:db.attr/preds`
+** Transaction post-conditions via `:db/ensure` (`::dlo/raw-txn` / `append-to-raw-txn`)
+** Schema verification (`schema-problems` / `verify-schema!`)
+** Per-transaction timeouts via `with-transaction` (`::dlo/transaction-timeout-ms`)
+* Production-ready error handling with detailed context (failures propagate; they are never swallowed)
+* Configurable batch-size safety limit
 * Input validation with helpful error messages
 
 == Installation
@@ -54,7 +60,7 @@ Or use a local checkout:
 (defattr email :account/email :string
   {::attr/schema      :main
    ::attr/identities  #{:account/id}
-   ;; Custom Datalevin schema override
+   ;; Merge native Datalevin schema keys via ::dlo/attribute-schema
    ::dlo/attribute-schema {:db/unique :db.unique/value}})
 
 ;; Enum attributes
@@ -81,9 +87,10 @@ Or use a local checkout:
 (def attributes [id name email role status permissions])
 ----
 
-NOTE: When querying enum attributes, use pull patterns with `:db/ident` to get the keyword value:
+NOTE: When querying enum attributes directly with `d/pull`, use pull patterns with `:db/ident` to get the keyword value:
 `(d/pull db [:account/id {:account/role [:db/ident]}] [:account/id id])` returns
-`{:account/id uuid :account/role {:db/ident :account.role/admin}}`.
+`{:account/id uuid :account/role {:db/ident :account.role/admin}}`. The auto-generated
+resolvers do this mapping for you and return the plain keyword (`:account.role/admin`).
 
 === 2. Start Database Connection
 
@@ -100,7 +107,10 @@ NOTE: When querying enum attributes, use pull patterns with `:db/ident` to get t
   (let [conn (dl/start-database!
                {:path       "/var/data/my-app"
                 :schema     :main
-                :attributes account/attributes})]
+                :attributes account/attributes
+                ;; optional: native Datalevin get-conn options (Datalevin 1.0.0)
+                :conn-opts  {:auto-entity-time? true
+                             :validate-data?    true}})]
     (swap! connections assoc :main conn)))
 
 (defn stop! []
@@ -117,7 +127,6 @@ NOTE: When querying enum attributes, use pull patterns with `:db/ident` to get t
   (:require
     [us.whitford.fulcro.rad.database-adapters.datalevin :as dl]
     [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]
-    [com.fulcrologic.rad.form :as form]
     [com.wsscode.pathom3.connect.indexes :as pci]
     [com.example.model.account :as account]
     [com.example.components.database :as db]))
@@ -127,7 +136,7 @@ NOTE: When querying enum attributes, use pull patterns with `:db/ident` to get t
                ;; other model attributes
                )))
 
-;; Generate resolvers for specific schema
+;; Generate resolvers for a specific schema (schema arg is required)
 (def auto-resolvers
   (dl/generate-resolvers all-attributes :main))
 
@@ -138,17 +147,10 @@ NOTE: When querying enum attributes, use pull patterns with `:db/ident` to get t
       ;; custom resolvers
       )))
 
-;; Create Pathom plugin with database mapper
-(def database-mapper
-  (fn [_env] @db/connections))
-
+;; The pathom-plugin injects ::dlo/connections and ::dlo/databases into the env.
+;; It takes a function that returns the schema -> connection map.
 (def pathom-plugins
-  [(dl/pathom-plugin database-mapper)])
-
-(def env
-  (-> indexes
-      ;; plugins will add ::dlo/connections and ::dlo/databases
-      ))
+  [(dl/pathom-plugin (fn [_env] @db/connections))])
 ----
 
 === 4. Configure Form Middleware
@@ -158,151 +160,164 @@ NOTE: When querying enum attributes, use pull patterns with `:db/ident` to get t
 (ns com.example.components.middleware
   (:require
     [us.whitford.fulcro.rad.database-adapters.datalevin :as dl]
-    [com.fulcrologic.rad.middleware.save-middleware :as save-mw]
-    [com.fulcrologic.rad.middleware.delete-middleware :as delete-mw]))
+    [com.fulcrologic.rad.middleware.save-middleware :as save-mw]))
 
-;; Middleware wraps the base handler
+;; Middleware wraps a base handler. Use the 1-arity form to compose,
+;; or the 0-arity form as a terminal handler.
 (def save-middleware
-  (-> identity-middleware
-      (dl/wrap-datalevin-save)
+  (-> (dl/wrap-datalevin-save)          ;; terminal
       (save-mw/wrap-rewrite-values)))
 
 (def delete-middleware
-  (-> identity-middleware
-      (dl/wrap-datalevin-delete)))
+  (dl/wrap-datalevin-delete))           ;; terminal
 
-;; Or use 0-arity for terminal handler
-(def save-middleware-terminal
-  (dl/wrap-datalevin-save))
-
-(def delete-middleware-terminal
-  (dl/wrap-datalevin-delete))
+;; Composing over your own handler:
+(def save-middleware-composed
+  (dl/wrap-datalevin-save my-base-save-handler))
 ----
+
+Schema is determined from each attribute's `::attr/schema`; the middleware does
+not take an options map.
 
 == API Reference
 
 === Schema Generation
 
-`automatic-schema`:: Generate Datalevin schema from RAD attributes
+`automatic-schema`:: Generate a Datalevin schema (map-of-maps) from RAD attributes
 +
 [source,clojure]
 ----
 (dl/automatic-schema :main account/attributes)
-;; => {:account/id {:db/valueType :db.type/uuid
-;;                  :db/unique :db.unique/identity}
-;;     :account/name {:db/valueType :db.type/string}
-;;     :account/email {:db/valueType :db.type/string}}
+;; => {:account/id    {:db/valueType :db.type/uuid
+;;                     :db/unique    :db.unique/identity}
+;;     :account/name  {:db/valueType :db.type/string}
+;;     :account/email {:db/valueType :db.type/string
+;;                     :db/unique    :db.unique/value}}
 ----
 
-`ensure-schema!`:: Ensure the database has the correct schema (updates if needed)
+`ensure-schema!`:: Ensure the connection's schema matches the RAD-derived schema (updates if needed)
 +
 [source,clojure]
 ----
 (dl/ensure-schema! conn schema-map)
 ----
 
+`schema-problems`:: Compare the RAD-derived expected schema against a connection's live schema; returns a seq of `:missing` / `:mismatch` problem maps for adapter-managed keys (`:db/valueType`, `:db/cardinality`, `:db/unique`).
++
+[source,clojure]
+----
+(dl/schema-problems conn :main account/attributes)
+;; => () when the live schema satisfies the expected schema
+----
+
+`verify-schema!`:: Like `schema-problems`, but throws `ex-info` when problems exist and returns `true` otherwise.
++
+[source,clojure]
+----
+(dl/verify-schema! conn :main account/attributes)
+----
+
 === Database Management
 
-`start-database!`:: Start a database connection with automatic schema
+`start-database!`:: Start a database connection with automatic schema. Config keys: `:path`, `:schema`, `:attributes`, `:auto-schema?` (default `true`), `:conn-opts` (optional native `get-conn` options; merged with adapter-derived `:vector-domains`).
 +
 [source,clojure]
 ----
 (dl/start-database!
-  {:path       "/var/data/mydb"
-   :schema     :main
-   :attributes all-attributes
-   :auto-schema? true})
+  {:path        "/var/data/mydb"
+   :schema      :main
+   :attributes  all-attributes
+   :auto-schema? true
+   :conn-opts   {:auto-entity-time? true
+                 :closed-schema?    true}})
 ----
 
-`stop-database!`:: Close a database connection
+`start-databases`:: Start several schemas at once. Takes a config holding `::dlo/databases` (schema -> per-database config) and an options map carrying the shared `:attributes`.
++
+[source,clojure]
+----
+(dl/start-databases
+  {::dlo/databases {:main    {:path "/var/data/main"
+                              :conn-opts {:auto-entity-time? true}}
+                    :reports {:path "/var/data/reports"}}}
+  {:attributes all-attributes})
+;; => {:main conn :reports conn}
+----
+
+`stop-database!` / `stop-databases`:: Close connection(s)
 +
 [source,clojure]
 ----
 (dl/stop-database! conn)
+(dl/stop-databases connections-map)
 ----
 
-`empty-db-connection`:: Create a temporary database for testing
-+
-[source,clojure]
-----
-(dl/empty-db-connection :main account/attributes)
-----
-
-`create-temp-database!`:: Create a temporary database with cleanup support
-+
-[source,clojure]
-----
-(let [{:keys [conn path cleanup!]} (dl/create-temp-database! :main attrs)]
-  (try
-    ;; use conn
-    (finally (cleanup!))))
-----
-
-`with-temp-database`:: Macro for temporary database with automatic cleanup
-+
-[source,clojure]
-----
-(dl/with-temp-database [conn :main attrs]
-  (d/transact! conn [...])
-  (dl/q '[:find ...] (d/db conn)))
-----
-
-`seed-database!`:: Seed a database with initial data
+`seed-database!`:: Seed a database with initial data (raw transaction)
 +
 [source,clojure]
 ----
 (dl/seed-database! conn [{:account/id id :account/name "Alice"}])
 ----
 
+NOTE: Temporary/throwaway databases for tests are provided by the test-only
+helpers `with-test-conn` / `with-test-conn-attrs` and `mock-resolver-env` in
+`...database-adapters.test-utils` (test source), not the main public API.
+
 === Middleware
 
-`wrap-datalevin-save`:: Form save middleware that transacts deltas to Datalevin
+`wrap-datalevin-save`:: Form save middleware that transacts deltas to Datalevin. Arities: `([])` terminal, `([handler])` composing.
 +
 [source,clojure]
 ----
-(def save-middleware (dl/wrap-datalevin-save))
-;; or with options
-(def save-middleware (dl/wrap-datalevin-save {:default-schema :main}))
+(def save-middleware (dl/wrap-datalevin-save))          ;; terminal
+(def save-middleware (dl/wrap-datalevin-save handler))  ;; compose
 ----
 
-`wrap-datalevin-delete`:: Form delete middleware that retracts entities
+`wrap-datalevin-delete`:: Form delete middleware. Arities: `([])` terminal, `([handler])` composing.
 +
 [source,clojure]
 ----
 (def delete-middleware (dl/wrap-datalevin-delete))
 ----
 
+`append-to-raw-txn`:: From your own save middleware, append native Datalevin transaction forms (e.g. `[:db/ensure ...]` post-conditions) to a save.
++
+[source,clojure]
+----
+(dl/append-to-raw-txn env [[:db/ensure `my.app.rules/balance-non-negative? [:account/id id]]])
+----
+
 === Resolver Generation
 
-`generate-resolvers`:: Generate Pathom3 resolvers from attributes
+`generate-resolvers`:: Generate Pathom3 resolvers from attributes for a schema (schema arg required). Produces an id-resolver and an all-ids resolver per identity.
 +
 [source,clojure]
 ----
-(def resolvers (dl/generate-resolvers all-attributes))
+(def resolvers (dl/generate-resolvers all-attributes :main))
 ----
 
-`id-resolver`:: Generate a single identity resolver
+`get-by-ids`:: Fetch multiple entities by their identity attribute values
 +
 [source,clojure]
 ----
-(dl/id-resolver account/id [account/name account/email])
+(dl/get-by-ids db :account/id [id1 id2] [:account/name :account/email])
+;; => {id1 {:account/name "Alice" ...} id2 {...}}
 ----
+
+Native-id helpers: `native-id?`, `pathom-query->datalevin-query`,
+`datalevin-result->pathom-result` support attributes that map onto Datalevin's
+internal `:db/id` (see `::dlo/native-id?`).
 
 === Pathom3 Integration
 
-`pathom-plugin`:: Create a Pathom3 plugin for database access
+`pathom-plugin`:: Create a Pathom3 plugin that injects `::dlo/connections` and `::dlo/databases` into the resolver env. Pass a `(fn [env])` returning the schema -> connection map.
 +
 [source,clojure]
 ----
-(dl/pathom-plugin connections)
+(dl/pathom-plugin (fn [_env] @connections))
 ----
 
-`mock-resolver-env`:: Create mock environment for testing
-+
-[source,clojure]
-----
-(dl/mock-resolver-env {:main conn})
-----
+`wrap-env`:: Lower-level env wiring used by `pathom-plugin`.
 
 === Query Utilities
 
@@ -329,54 +344,70 @@ NOTE: When querying enum attributes, use pull patterns with `:db/ident` to get t
 (dl/pull-many db [:account/name] eids)
 ----
 
-`get-by-ids`:: Fetch multiple entities by their identity attribute values
-+
-[source,clojure]
-----
-(dl/get-by-ids db :account/id [id1 id2] [:account/name :account/email])
-;; => {id1 {:account/name "Alice" ...} id2 {...}}
-----
+=== Delta Utilities
 
-=== Dynamic Configuration
-
-The following dynamic vars control runtime behavior:
-
-`*max-batch-size*`:: Maximum number of entities in batch queries (default: 1000)
-`*transaction-timeout-ms*`:: Transaction timeout in milliseconds (default: 30000)
-`*max-retries*`:: Maximum retry attempts for transient failures (default: 3)
-
-[source,clojure]
-----
-(binding [dl/*max-batch-size* 500]
-  (dl/get-by-ids db :account/id ids pattern))
-----
+Lower-level helpers used by the save middleware, re-exported for advanced use:
+`delta->txn`, `keys-in-delta`, `schemas-for-delta`, `save-form!`.
 
 == Configuration Options
 
-The `datalevin-options` namespace provides configuration keys:
+The `datalevin-options` namespace (`::dlo/*`) provides configuration keys:
 
 [source,clojure]
 ----
 (require '[us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo])
 
-;; Environment keys (used in Pathom env)
-::dlo/connections  ; Map of schema -> connection
-::dlo/databases    ; Map of schema -> current db value
+;; Environment keys (injected by pathom-plugin)
+::dlo/connections   ; Map of schema -> connection
+::dlo/databases     ; Map of schema -> current db value
 
 ;; Attribute-level options
-::dlo/attribute-schema   ; Override Datalevin schema
-::dlo/native-id?         ; Use Datalevin's internal entity IDs
-::dlo/generate-resolvers? ; Disable automatic resolver generation
+::dlo/attribute-schema     ; Merge/override native Datalevin schema keys
+                           ; (e.g. :db/unique, :db.attr/preds)
+::dlo/native-id?           ; Use Datalevin's internal :db/id (attribute must be :long)
+::dlo/generate-resolvers?  ; If false, skip automatic resolver generation
+::dlo/wrap-resolve         ; (fn [resolve]) => (fn [env input]) wrapping an id-resolver
+::dlo/schema               ; Schema name for this attribute
 
-;; Schema options
-::dlo/schema            ; Schema name for this attribute
-::dlo/transact-options  ; Options passed to transact!
+;; Save-env keys
+::dlo/transact-options       ; Passed as tx-meta (3rd arg) to transact!
+::dlo/raw-txn                ; Vector of native txn forms to append (e.g. :db/ensure)
+::dlo/transaction-timeout-ms ; Per-txn timeout via with-transaction (Datalevin 1.0.0)
 
-;; Performance and safety limits
-::dlo/transaction-timeout-ms ; Timeout in milliseconds (default: 30000)
-::dlo/max-retries            ; Max retry attempts (default: 3)
+;; Resolver-env key
 ::dlo/max-batch-size         ; Max entities per batch query (default: 1000)
 ----
+
+=== Database-Side Validation & Post-Conditions (Datalevin 1.0.0)
+
+Attribute predicates (`:db.attr/preds`) enforce database-side value validation.
+The predicate must be a *qualified symbol* (the schema is persisted and resolved
+via `requiring-resolve`), is invoked as `(pred value)`, and must return strictly
+`true` — any other result aborts the write with a `:transact/attr-pred` error:
+
+[source,clojure]
+----
+;; my.app.validation
+(defn valid-email? [v] (boolean (re-matches #".+@.+\..+" v)))
+
+(defattr email :account/email :string
+  {::attr/identity?       true
+   ::dlo/attribute-schema {:db.attr/preds 'my.app.validation/valid-email?}})
+----
+
+For transaction-level assertions (spanning attributes/entities), append a
+`[:db/ensure pred & args]` form via `::dlo/raw-txn` / `append-to-raw-txn`. The
+predicate runs against `db-after` and aborts the transaction on any falsey
+result.
+
+=== Vector Attributes (`:vec`)
+
+RAD attributes of type `:vec` map to `:db.type/vec` and build a Datalevin
+HNSW vector index. The index configuration (notably `:dimensions`) lives on the
+*connection*, not the schema; the adapter derives it automatically and passes
+`:vector-domains` to `d/get-conn`. Put `:db.vec/dimensions` in the attribute's
+`::dlo/attribute-schema` and the adapter strips it from the schema and moves it
+to the connection options.
 
 == Type Mapping
 
@@ -430,11 +461,22 @@ RAD types are automatically mapped to Datalevin types:
 
 | `:tuple`
 | `:db.type/tuple`
+
+| `:vec`
+| `:db.type/vec`
 |===
+
+Numeric values are coerced to the declared RAD type on save (`fix-numerics`):
+`:int`/`:long` → `long`, `:double`/`:float` → `double`, `:bigdec` → `bigdec`.
+This handles JavaScript clients that transmit integers where doubles are
+expected (and vice versa), avoiding `:db.type` mismatch errors.
 
 == Error Handling
 
-The adapter provides structured error handling with detailed context:
+The adapter provides structured error handling with detailed context. Save and
+delete transaction failures are always propagated (never swallowed) so
+attribute-predicate, `:db/ensure`, and other transaction errors reach the
+caller/client.
 
 === Missing Connection Errors
 
@@ -445,11 +487,10 @@ When a database connection is not configured for a schema, an `ex-info` exceptio
 
 === Transaction Failures
 
-Failed transactions throw `ex-info` with:
+Failed save/delete transactions throw `ex-info` with context, e.g.:
 
-* `:schema` - the schema where the transaction failed
-* `:txn-count` - number of transaction entries
-* `:error-message` - the underlying error message
+* save: `:schema`, `:txn-data`
+* delete: `:ident`, `:schema`
 
 === Input Validation
 
@@ -461,21 +502,20 @@ Invalid delta structures are rejected with descriptive errors:
 
 === Batch Size Limits
 
-Queries exceeding `*max-batch-size*` throw with:
-
-* `:requested` - requested batch size
-* `:maximum` - configured maximum
-* `:id-attr` - the identity attribute being queried
+Batch queries exceeding the max batch size (default 1000, override with
+`::dlo/max-batch-size` in the resolver env) throw with `:requested`,
+`:maximum`, and `:id-attr` context.
 
 == Differences from Datomic Adapter
 
 Key differences from `fulcro-rad-datomic`:
 
-* **Schema format**: Datalevin uses map-of-maps schema format, not transaction vectors
+* **Schema format**: Datalevin uses a map-of-maps schema format, not transaction vectors
 * **No temporal database**: Datalevin doesn't maintain history by default
 * **Embedded database**: No separate transactor process needed
 * **Connection management**: Uses `get-conn` instead of `connect`
 * **Schema updates**: Schema passed at connection time, updated via `update-schema`
+* **Vector search**: Native `:db.type/vec` / HNSW index via `:vector-domains`
 * **Namespace**: Uses `us.whitford.fulcro.rad.database-adapters` instead of `com.fulcrologic.rad.database-adapters`
 
 == Development
@@ -484,35 +524,37 @@ Key differences from `fulcro-rad-datomic`:
 
 [source,bash]
 ----
-clj -M:run-tests
+clojure -M:run-tests
+----
+
+Focus a single namespace:
+
+[source,bash]
+----
+clojure -M:run-tests --focus <test-ns>
+----
+
+=== Linting
+
+[source,bash]
+----
+clj-kondo --lint src/main src/test
 ----
 
 === Checking for Outdated Dependencies
 
 [source,bash]
 ----
-clj -M:outdated
+clojure -M:outdated
 ----
 
-=== Building
-
-[source,bash]
-----
-clj -X:jar
-----
-
-=== Installing Locally
+=== Building / Installing / Deploying
 
 [source,bash]
 ----
-clj -X:install
-----
-
-=== Deploying
-
-[source,bash]
-----
-clj -X:deploy
+clojure -X:jar
+clojure -X:install
+clojure -X:deploy
 ----
 
 == Troubleshooting
@@ -523,31 +565,23 @@ clj -X:deploy
 
 **Common Causes**:
 
-1. **Middleware not properly configured** - Ensure middleware wraps your handler:
+1. **Middleware not properly configured** - Ensure the save/delete middleware is in your form handler chain:
 +
 [source,clojure]
 ----
-(def wrapped-handler
-  (-> base-handler
-      (dl/wrap-datalevin-save {:default-schema :main})
-      (dl/wrap-datalevin-delete)))
+(def save-middleware
+  (-> (dl/wrap-datalevin-save)
+      (save-mw/wrap-rewrite-values)))
 ----
 
-2. **Missing database connection** - Verify `::dlo/connections` is in your Pathom environment:
-+
-[source,clojure]
-----
-{::dlo/connections @connections
- ::dlo/databases   (into {} (map (fn [[k v]] [k (d/db v)])) @connections)}
-----
+2. **Missing database connection** - Verify the Pathom env has `::dlo/connections` (the `pathom-plugin` injects this from the function you provide).
 
-3. **Schema mismatch** - Ensure attribute schema names match connection keys:
+3. **Schema mismatch** - Ensure each attribute's `::attr/schema` matches a key in your connections map:
 +
 [source,clojure]
 ----
 ;; Attribute defines :main
-(defattr id :account/id :uuid
-  {::attr/schema :main})
+(defattr id :account/id :uuid {::attr/schema :main})
 
 ;; Connection must use :main
 (swap! connections assoc :main conn)
@@ -557,48 +591,24 @@ clj -X:deploy
 
 1. Run the test suite to verify the adapter works: `clojure -M:run-tests`
 2. If tests pass, the issue is in your app configuration
-3. Add logging to verify middleware returns a map with `:tempids` key
-4. Check server logs for connection errors
+3. `tap>` the middleware result and confirm it includes a `:tempids` key
+4. Check server logs for connection or transaction errors (they are no longer swallowed)
 
 === "No database connection configured for schema"
 
 **Cause**: Your attributes reference a schema that doesn't have a connection.
 
-**Solution**: Add the missing connection or use `default-schema`:
-
-[source,clojure]
-----
-;; Option 1: Add connection
-(swap! connections assoc :production conn)
-
-;; Option 2: Use default schema in middleware
-(dl/wrap-datalevin-save {:default-schema :production})
-----
+**Solution**: Add the missing connection so every `::attr/schema` used has a matching key in the connections map.
 
 === Batch Size Limit Errors
 
-**Cause**: Trying to fetch more than 1000 entities in a single query.
+**Cause**: Trying to fetch more than the max batch size (default 1000) in a single query.
 
-**Solution**: Either paginate your queries or increase the limit:
-
-[source,clojure]
-----
-(binding [dl/*max-batch-size* 5000]
-  ;; your large query here
-  )
-----
-
-=== Test Database Cleanup Issues
-
-**Symptom**: `/tmp` fills up with test databases.
-
-**Solution**: Use the `with-temp-database` macro for automatic cleanup:
+**Solution**: Paginate, or raise the limit via the resolver env:
 
 [source,clojure]
 ----
-(dl/with-temp-database [conn :test test-attributes]
-  ;; test code here - database automatically cleaned up
-  )
+{::dlo/max-batch-size 5000}
 ----
 
 == License
