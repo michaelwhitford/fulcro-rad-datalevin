@@ -15,9 +15,13 @@ Build/test: `clojure -M:run-tests` (kaocha). Focus one ns:
 
 ## Now
 
-Just adopted the Mementum memory protocol (this bundle). Prior to that we
-completed a **Datalevin 0.10.5 → 1.0.0 upgrade** and surfaced its capabilities
-through the adapter.
+**AGENTS.md converted to VSM lambda style** (anima-style: S5→S1 layers, lambda
+notation). The Mementum protocol lambdas are now **inlined in AGENTS.md**
+(S5 `λ mementum`/`λ termination`/`λ feed_forward`, S4 metabolism, S1
+`λ orient`/`λ recall`/`λ memory`); the vendored `MEMENTUM-LAMBDA.md` was
+deleted. First five memories committed. Prior to that we completed a
+**Datalevin 0.10.5 → 1.0.0 upgrade** and surfaced its capabilities through
+the adapter.
 
 ## Recently done (Datalevin 1.0.0 wiring)
 

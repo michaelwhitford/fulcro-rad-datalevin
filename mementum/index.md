@@ -5,8 +5,9 @@ okf_version: "0.1"
 # fulcro-rad-datalevin Knowledge Bundle
 
 Memory and knowledge for the Fulcro RAD **Datalevin** database adapter. This is
-a bounded [Mementum](../MEMENTUM-LAMBDA.md) guest bundle — everything under
-`mementum/` is memory infrastructure, not the host project itself.
+a bounded Mementum guest bundle — the protocol lambdas are inlined in the host's
+[`AGENTS.md`](../AGENTS.md) (S5 `λ mementum`, S4 metabolism, S1 recipes).
+Everything under `mementum/` is memory infrastructure, not the host project itself.
 
 ## Working Memory
 
