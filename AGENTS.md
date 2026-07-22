@@ -32,7 +32,7 @@ S5(identity) > S4(intelligence) > S3(control) > S2(coordination) > S1(operations
                   | symbols: 💡 insight | 🔄 shift | 🎯 decision | 🌀 meta | ❌ mistake | ✅ win | 🔁 pattern
                   | symbols ≡ event_types(what_happened) | apply(memory_commits ∧ code_commits)
                   | closed_set | ¬extend_without_human
-                  | PLAN.md ∧ CHANGELOG.md ≡ host_planning | mementum/ ≡ AI_memory | separate
+                  | CHANGELOG.md ≡ host_changelog | mementum/state.md ≡ working_memory(planning) | separate
 
 λ termination.    synthesis ≡ AI | approval ≡ human | human ≡ termination_condition
                   | memories ∧ knowledge: AI_proposes → human_approves → AI_commits
@@ -105,7 +105,7 @@ S5(identity) > S4(intelligence) > S3(control) > S2(coordination) > S1(operations
 λ gap(target, reference).
                   inventory(target) ∧ inventory(reference) → ∀feature: classify(HAS ∨ PARTIAL ∨ MISSING)
                   | reference ≡ datomic_adapter ∧ xtdb_adapter ∧ datalevin_native_capability
-                  | output: table → PLAN.md | proved: 1.0.0_upgrade ≡ gap(adapter, datalevin-1.0)
+                  | output: table → mementum/state.md(Backlog) | proved: 1.0.0_upgrade ≡ gap(adapter, datalevin-1.0)
 
 λ extend(x).      addition > modification | open_slot > closed_dispatch | option > detection
                   | pure_schema_feature → native_key ∈ ::dlo/attribute-schema | ¬new_option
@@ -263,8 +263,8 @@ S5(identity) > S4(intelligence) > S3(control) > S2(coordination) > S1(operations
                   |   datalevin/pathom_plugin.clj  — env wiring
                   |   datalevin/utilities.clj      — q/pull/seed helpers
                   | src/test/…/database_adapters/  — kaocha tests + test_utils.clj
-                  | PLAN.md ≡ planning | CHANGELOG.md ≡ changes | single_file_each
-                  | mementum/state.md ≡ bootloader | mementum/knowledge/design/ ≡ designs_before_code
+                  | CHANGELOG.md ≡ changes | mementum/state.md ≡ planning ∧ bootloader(working_memory)
+                  | mementum/knowledge/design/ ≡ designs_before_code | PLAN.md ≡ retired(→ state.md Backlog)
 ```
 
 ### Recipes

@@ -1,44 +1,58 @@
 # Quick Start Guide
 
-Get up and running with fulcro-rad-datalevin in 5 minutes.
+Get up and running with fulcro-rad-datalevin in a few minutes. See
+[README.adoc](README.adoc) for the complete API reference.
 
-## 1. Add Dependency
+## 1. Add Dependencies
 
 ```clojure
 ;; deps.edn
-{:deps {us.whitford/fulcro-rad-datalevin 
+{:deps {us.whitford/fulcro-rad-datalevin
         {:git/url "https://github.com/michaelwhitford/fulcro-rad-datalevin"
          :git/sha "LATEST_SHA"}
-        
-        ;; Also need these if not already present
-        com.fulcrologic/fulcro-rad {:mvn/version "1.6.6"}
-        io.github.juji-io/datalevin {:mvn/version "0.9.11"}}}
+
+        ;; Peer dependencies (if not already present)
+        com.fulcrologic/fulcro-rad {:mvn/version "1.6.24"}
+        datalevin/datalevin        {:mvn/version "1.0.0"}
+
+        ;; Bring your own Pathom — this library does NOT bundle it.
+        ;; Pathom 3:
+        com.wsscode/pathom3        {:mvn/version "2025.01.16-alpha"}
+        ;; ...or Pathom 2:
+        ;; com.wsscode/pathom      {:mvn/version "2.4.0"}
+        }}
 ```
+
+The adapter works with **both Pathom 2 and Pathom 3** and has no hard dependency
+on either.
 
 ## 2. Define Attributes
 
 ```clojure
 (ns app.model.account
   (:require
-    [com.fulcrologic.rad.attributes :as attr :refer [defattr]]))
+    [com.fulcrologic.rad.attributes :as attr :refer [defattr]]
+    [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]))
 
 (defattr id :account/id :uuid
-  {::attr/schema    :production
+  {::attr/schema    :main
    ::attr/identity? true})
 
 (defattr email :account/email :string
-  {::attr/schema     :production
+  {::attr/schema     :main
    ::attr/identities #{:account/id}
-   ::attr/required?  true})
+   ::attr/required?  true
+   ;; Merge native Datalevin schema keys via ::dlo/attribute-schema
+   ::dlo/attribute-schema {:db/unique :db.unique/value}})
 
 (defattr name :account/name :string
-  {::attr/schema     :production
+  {::attr/schema     :main
    ::attr/identities #{:account/id}})
 
 (def attributes [id email name])
 ```
 
-## 3. Start Database
+## 3. Start the Database
 
 ```clojure
 (ns app.components.database
@@ -50,10 +64,12 @@ Get up and running with fulcro-rad-datalevin in 5 minutes.
 
 (defn start! []
   (let [conn (dl/start-database!
-               {:path       "data/production.db"
-                :schema     :production
-                :attributes account/attributes})]
-    (swap! connections assoc :production conn)))
+               {:path       "data/main.db"
+                :schema     :main
+                :attributes account/attributes
+                ;; optional native get-conn options (Datalevin 1.0.0)
+                :conn-opts  {:auto-entity-time? true}})]
+    (swap! connections assoc :main conn)))
 
 (defn stop! []
   (doseq [[_ conn] @connections]
@@ -61,90 +77,75 @@ Get up and running with fulcro-rad-datalevin in 5 minutes.
   (reset! connections {}))
 ```
 
-## 4. Configure Pathom
+## 4. Configure the Pathom Processor
+
+The save/delete middleware and generated resolvers are wired into the parser env
+via `form/*` and `dl/*` helpers. `generate-resolvers` returns Pathom-2-shape
+resolver maps; RAD's Pathom 3 `new-processor` auto-converts them.
+
+### Pathom 3
 
 ```clojure
 (ns app.components.parser
   (:require
+    [com.fulcrologic.rad.attributes :as attr]
+    [com.fulcrologic.rad.form :as form]
+    [com.fulcrologic.rad.pathom3 :as pathom3]
     [us.whitford.fulcro.rad.database-adapters.datalevin :as dl]
-    [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]
-    [com.wsscode.pathom3.connect.indexes :as pci]
-    [com.wsscode.pathom3.interface.eql :as p.eql]
     [app.model.account :as account]
     [app.components.database :as db]))
 
-;; Generate resolvers from attributes
-(def resolvers (dl/generate-resolvers account/attributes))
+(def all-attributes (vec account/attributes))
 
-;; Create Pathom environment
-(defn make-env []
-  (let [connections @db/connections]
-    {::dlo/connections connections
-     ::dlo/databases   (into {} (map (fn [[k v]] [k (dl/db v)])) connections)}))
+(def processor
+  (pathom3/new-processor {}
+    ;; env-middleware chain: attr, form (with our save/delete), then our wrap-env
+    (-> (attr/wrap-env all-attributes)
+        (form/wrap-env (dl/wrap-datalevin-save) (dl/wrap-datalevin-delete))
+        (dl/wrap-env (fn [_env] @db/connections)))
+    []                                              ;; extra Pathom 3 plugins
+    [(dl/generate-resolvers all-attributes :main)   ;; schema arg is required
+     form/resolvers]))                              ;; RAD's save/delete mutations
 
-;; Create parser
-(def parser
-  (p.eql/boundary-interface
-    (pci/register resolvers)))
-
-;; Query function
-(defn query [eql]
-  (parser (make-env) eql))
+;; Run an EQL query:
+(processor {} [{[:account/id some-uuid] [:account/name]}])
 ```
 
-## 5. Add Save/Delete Middleware
+### Pathom 2
 
-```clojure
-(ns app.server.middleware
-  (:require
-    [us.whitford.fulcro.rad.database-adapters.datalevin :as dl]
-    [app.components.database :as db]))
+Use `pathom/new-parser` with the plugin variants — `dl/pathom-plugin` and
+`form/pathom-plugin`. See [README.adoc](README.adoc) ("Configure Pathom Parser")
+for the full Pathom 2 example.
 
-;; Create middleware
-(def save-middleware
-  (dl/wrap-datalevin-save 
-    {:default-schema :production}))
-
-(def delete-middleware
-  (dl/wrap-datalevin-delete))
-
-;; Wrap your handler
-(defn wrap-api [handler]
-  (-> handler
-      save-middleware
-      delete-middleware))
-```
-
-## 6. Use in Forms
+## 5. Use in Forms
 
 ```clojure
 (ns app.ui.account-form
   (:require
-    [com.fulcrologic.fulcro.components :as comp :refer [defsc]]
-    [com.fulcrologic.rad.form :as form]
+    [com.fulcrologic.rad.form :as form :refer [defsc-form]]
+    [com.fulcrologic.rad.form-options :as fo]
     [app.model.account :as account]))
 
-(defsc AccountForm [this props]
-  {:ident         :account/id
-   :query         [:account/id :account/email :account/name]
-   ::form/id      account-id
-   ::form/fields  #{:account/email :account/name}
-   ::form/attributes account/attributes}
-  
-  (form/render-layout this))
+(defsc-form AccountForm [this props]
+  {fo/id         account/id
+   fo/attributes [account/name account/email]})
 ```
 
-## 7. Query Data
+Saving a form runs the `form/save-form` mutation through the save middleware.
+Because the adapter publishes the transaction's `:db-after` into the request
+snapshot (read-your-writes), the mutation returns the saved entity — not just
+`:tempids` — so the form is populated with server-confirmed values.
+
+## 6. Query Data
 
 ```clojure
-;; Get all accounts
-(query [{:all-accounts [:account/id :account/email :account/name]}])
-;; => {:all-accounts [{:account/id #uuid "..." :account/email "..." :account/name "..."}
-;;                    ...]}
+;; All accounts (the generated all-ids resolver key is :<entity-ns>/all)
+(processor {} [{:account/all [:account/id :account/email :account/name]}])
+;; => {:account/all [{:account/id #uuid "..." :account/email "..." :account/name "..."} ...]}
 
-;; Get specific account
-(query [{[:account/id #uuid "..."] [:account/email :account/name]}])
-;; => {[:account/id #uuid "..."] {:account/email "..." :account/name "..."}}
+;; A specific account by ident
+(processor {} [{[:account/id some-uuid] [:account/email :account/name]}])
+;; => {[:account/id some-uuid] {:account/email "..." :account/name "..."}}
 ```
 
 ## Testing
@@ -153,9 +154,13 @@ Get up and running with fulcro-rad-datalevin in 5 minutes.
 # Run all tests
 clojure -M:run-tests
 
-# Run specific test namespace
-clojure -M:run-tests --focus us.whitford.fulcro.rad.database-adapters.datalevin-core-test
+# Focus a single namespace
+clojure -M:run-tests --focus us.whitford.fulcro.rad.database-adapters.datalevin-test
 ```
+
+Throwaway databases for your own tests are provided by the **test-only** helpers
+`with-test-conn` / `with-test-conn-attrs` and `mock-resolver-env` in
+`us.whitford.fulcro.rad.database-adapters.test-utils`.
 
 ## Common Patterns
 
@@ -163,61 +168,38 @@ clojure -M:run-tests --focus us.whitford.fulcro.rad.database-adapters.datalevin-
 
 ```clojure
 (defn start! []
-  (let [prod-conn (dl/start-database!
-                    {:path "data/production.db"
-                     :schema :production
-                     :attributes production-attrs})
-        dev-conn  (dl/start-database!
-                    {:path "data/development.db"
-                     :schema :development
-                     :attributes dev-attrs})]
-    (swap! connections assoc
-      :production prod-conn
-      :development dev-conn)))
+  (swap! connections assoc
+    :main    (dl/start-database! {:path "data/main.db"    :schema :main    :attributes main-attrs})
+    :reports (dl/start-database! {:path "data/reports.db" :schema :reports :attributes report-attrs})))
 ```
 
-### Custom Schema Overrides
+Each attribute's `::attr/schema` selects its connection; the wiring function you
+pass to `dl/wrap-env` / `dl/pathom-plugin` returns the whole schema → connection map.
+
+### Composing Save Middleware
 
 ```clojure
-(defattr email :account/email :string
-  {::attr/schema     :production
-   ::attr/identities #{:account/id}
-   ;; Override with Datalevin-specific schema
-   ::dlo/attribute-schema {:db/unique :db.unique/value}})
+;; Terminal (most common):
+(dl/wrap-datalevin-save)
+
+;; Composing over your own handler (runs after the save):
+(dl/wrap-datalevin-save my-base-save-handler)
 ```
+
+The schema is derived from each attribute's `::attr/schema`; the middleware takes
+no options map.
 
 ### Batch Queries
 
 ```clojure
-;; Default limit: 1000
+;; Default limit: 1000 (override via ::dlo/max-batch-size in the resolver env)
 (dl/get-by-ids db :account/id account-ids [:account/email :account/name])
-
-;; Increase limit for large queries
-(binding [dl/*max-batch-size* 5000]
-  (dl/get-by-ids db :account/id many-ids pattern))
-```
-
-### Temporary Test Databases
-
-```clojure
-(deftest my-test
-  (dl/with-temp-database [conn :test test-attributes]
-    ;; Use conn for testing
-    (dl/transact! conn [{:account/id (random-uuid)
-                         :account/email "test@example.com"}])
-    ;; Automatically cleaned up after test
-    ))
 ```
 
 ## Next Steps
 
-- Read the full [README.adoc](README.adoc) for complete API documentation
-- Check [CHANGELOG.md](CHANGELOG.md) for recent updates
-- See [AGENTS.md](AGENTS.md) for development workflow
-- Review [BETA_RELEASE_NOTES.md](BETA_RELEASE_NOTES.md) for known limitations
-
-## Need Help?
-
-Common issues and solutions are in the README's Troubleshooting section.
+- Read the full [README.adoc](README.adoc) for complete API documentation.
+- Check [CHANGELOG.md](CHANGELOG.md) for recent changes and known breaking changes.
+- See [AGENTS.md](AGENTS.md) for the development workflow.
 
 For bugs or questions, please open an issue on GitHub.

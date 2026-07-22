@@ -128,6 +128,6 @@ resolution** — the caller supplies real entity ids. Batch size is controlled b
 `datalevin.constants/*fill-db-batch-size*` (default 2,097,152 datoms). For bulk
 load *with* validation, prefer `transact-async` in WAL mode.
 
-These back the "bulk load" item on the adapter's PLAN.md backlog.
+These back the "bulk load" item on the adapter's backlog (`mementum/state.md`).
 
 `src: src/datalevin/core.clj (init-db, fill-db), doc/transact.md (bulk load)`

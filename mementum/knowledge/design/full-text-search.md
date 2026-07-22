@@ -47,8 +47,8 @@ related:
 ## 1. Context
 
 We upgraded the adapter to **Datalevin 1.0.0** and wired most of its new
-capabilities (see `CHANGELOG.md` "Unreleased" and `PLAN.md` "Datalevin 1.0.0
-Wiring"). Full-text search is the remaining strategic feature, called out because
+capabilities (see `CHANGELOG.md` "Unreleased"). Full-text search is the
+remaining strategic feature, called out because
 the next project pairs it with `:vec` vector attributes for **hybrid
 semantic + keyword search**.
 
@@ -249,7 +249,8 @@ special-cases `:vector-domains` merge; add the same care for `:search-domains`
 - `src/main/.../datalevin/generate_resolvers.clj` — new `search-resolver` (mirror
   `all-ids-resolver`), wire into `generate-resolvers`.
 - `src/test/.../` — new `search_test.clj`.
-- `CHANGELOG.md` / `PLAN.md` (PLAN has a "Remaining v1.0 opportunities" note).
+- `CHANGELOG.md` (shipped changes) / `mementum/state.md` "Backlog" (remaining
+  v1.0 opportunities).
 
 ## 9. Patterns to mirror (concrete anchors in this codebase)
 

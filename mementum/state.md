@@ -126,8 +126,25 @@ Start with **Phase 0 spike (RISK #1)**: prove the Pathom param round-trip
 (`{:params {:query …}}` → resolver) in `datalevin-test-app`, plus a low-level
 `d/fulltext` round-trip. Then Phase 1 (schema + connection), Phase 2 (resolver).
 
-Other remaining v1.0 opportunities (PLAN.md): bulk load via `transact-async` /
-`init-db` / `fill-db`; tuple round-trip test under v1.0 storage.
+### Backlog (migrated from the retired PLAN.md)
+
+Remaining adapter-parity / enhancement opportunities, roughly by value:
+
+- **Bulk load** via `transact-async` / `init-db` / `fill-db`; **tuple round-trip**
+  test under v1.0 storage.
+- **Query result pruning (minimal pull)** — prune the pull pattern to just the
+  client-requested keys (datomic adapter does this via `env->client-query-ast`).
+- **Resolver transform support** — honor a `::pc/transform` / `::pco/transform`
+  on generated resolvers.
+- **Guardrails/spec coverage** — broaden `>defn` specs across the public API.
+- **Indexed access / tuple scanning** — range/tuple resolvers (datomic
+  `indexed_access`).
+- **Transaction functions** — support `:db.fn/call`-style tx fns if a use case
+  appears.
+
+(PLAN.md was deleted — it had gone stale, e.g. still claiming Pathom 2 and
+read-your-writes were unimplemented after both shipped. Working memory lives
+here in `state.md`; `CHANGELOG.md` records shipped changes.)
 
 ## Blocking / open
 
@@ -146,4 +163,5 @@ Other remaining v1.0 opportunities (PLAN.md): bulk load via `transact-async` /
   `run-save-transact!`, `append-to-raw-txn`, `fix-numerics`.
 - `src/main/.../datalevin/wrap_datalevin_delete.clj` — `delete-entity!`.
 - `src/main/.../datalevin_options.cljc` — all `::dlo/*` option keys.
-- `PLAN.md`, `CHANGELOG.md` — code planning + changelog (separate from mementum).
+- `CHANGELOG.md` — host-facing changelog (shipped changes). Planning/working
+  memory lives in this `state.md` (PLAN.md retired).
