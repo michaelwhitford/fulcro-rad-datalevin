@@ -11,6 +11,7 @@
    [edn-query-language.core :as eql]
    [taoensso.timbre :as log]
    [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]
+   [us.whitford.fulcro.rad.database-adapters.datalevin.pathom-plugin :as pp]
    [us.whitford.fulcro.rad.database-adapters.datalevin.utilities :as util]))
 
 (def ^:private tempid-counter
@@ -290,6 +291,9 @@
               (try
                 (let [tx-result (run-save-transact! env conn txn-data)
                       tempid-map (tempid->result-id tx-result schema-delta)]
+                  ;; Publish the post-save db so resolvers later in this same
+                  ;; Pathom request read their own writes (read-your-writes).
+                  (pp/refresh-db-snapshot! env schema (:db-after tx-result))
                   (swap! result update :tempids merge tempid-map))
                 (catch Exception e
                   ;; Propagate rather than swallow: attribute predicate

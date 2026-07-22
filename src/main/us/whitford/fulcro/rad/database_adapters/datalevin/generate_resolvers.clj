@@ -22,6 +22,15 @@
   "Maximum number of entities to fetch in a single batch query."
   1000)
 
+(defn- db-value
+  "Read the current Datalevin database for `schema` from a `::dlo/databases` map.
+   Values are atoms (see `pathom-plugin/wrap-env`) so that the save/delete
+   middleware can publish `:db-after` mid-request; a bare `db` is tolerated for
+   backward compatibility and direct-resolver tests."
+  [databases schema]
+  (let [d (get databases schema)]
+    (if (instance? clojure.lang.IDeref d) (deref d) d)))
+
 ;; ================================================================================
 ;; Native ID Helpers
 ;; ================================================================================
@@ -233,9 +242,16 @@
                                 (map ::attr/qualified-key))
                                output-attributes)
           resolve-sym    (symbol (str (namespace qualified-key) "." (name qualified-key) "-resolver"))
-          core-resolver  (fn [{::dlo/keys [databases] ::attr/keys [key->attribute] :as env} inputs]
+          core-resolver  (fn [{::dlo/keys [databases] ::attr/keys [key->attribute] :as env} input]
                            (binding [*max-batch-size* (or (dlo/max-batch-size env) *max-batch-size*)]
-                            (let [db     (get databases schema)
+                            ;; Batch resolvers are invoked two ways: Pathom 3 (and
+                            ;; batched Pathom 2) pass a VECTOR of inputs and expect
+                            ;; a vector back; Pathom 2 passes a SINGLE input map for
+                            ;; a lone entity and expects a single map back. Detect
+                            ;; and respond in kind.
+                            (let [batch? (sequential? input)
+                                 inputs (if batch? input [input])
+                                 db     (db-value databases schema)
                                  ids    (mapv #(get % qualified-key) inputs)
                                  data   (get-by-ids db qualified-key ids datalevin-pull enum-keys is-native-id?)
                                  ;; Convert :db/id back to qualified key for native IDs
@@ -244,8 +260,9 @@
                                  ;; Use pathom-pattern (with :person/id) for AST parsing, not datalevin-pull (with :db/id)
                                  fixed  (if is-native-id?
                                           (datalevin-result->pathom-result key->attribute pathom-pattern result)
-                                          result)]
-                             (auth/redact env fixed))))
+                                          result)
+                                 redacted (auth/redact env fixed)]
+                             (if batch? redacted (first redacted)))))
           final-resolver (if wrap-resolve
                            (wrap-resolve core-resolver)
                            core-resolver)]
@@ -299,7 +316,7 @@
      :com.wsscode.pathom.connect/output [{all-ids-key [qualified-key]}]
      :com.wsscode.pathom.connect/resolve
      (fn [{::dlo/keys [databases] :as env} _input]
-       (let [db (get databases schema)]
+       (let [db (db-value databases schema)]
          (if is-native-id?
            ;; For native IDs, find entities by querying for a non-identity attribute
            ;; from the same entity type (e.g., :person/name for :person/id)

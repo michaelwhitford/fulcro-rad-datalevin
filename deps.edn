@@ -16,10 +16,12 @@
  ;; P2->P3 conversion path. See generate-resolvers / generate-resolvers-pathom3.
  :aliases {:test    {:extra-paths ["src/test"]
                      :extra-deps  {fulcrologic/fulcro-spec {:mvn/version "3.2.10"}
+                                   com.wsscode/pathom      {:mvn/version "2.4.0"}
                                    com.wsscode/pathom3     {:mvn/version "2025.01.16-alpha"}}}
 
            :run-tests {:extra-paths ["src/test"]
                        :extra-deps {lambdaisland/kaocha  {:mvn/version "1.91.1392"}
+                                    com.wsscode/pathom   {:mvn/version "2.4.0"}
                                     com.wsscode/pathom3  {:mvn/version "2025.01.16-alpha"}}
                        :jvm-opts ["--enable-native-access=ALL-UNNAMED"]
                        :main-opts ["-m" "kaocha.runner"]}

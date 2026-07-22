@@ -15,6 +15,29 @@ Build/test: `clojure -M:run-tests` (kaocha). Focus one ns:
 
 ## Now
 
+**Real dual-Pathom integration tests + read-your-writes (v1.0-alpha prep).**
+- New `pathom_integration_test.clj` drives the adapter through **real** RAD
+  parsers — `pathom/new-parser` (P2) and `pathom3/new-processor` (P3) — full CRUD
+  parity: id read, all-ids read, `form/save-form` new+update (asserting returned
+  entity), `form/delete-entity`. `com.wsscode/pathom` (2) added as test dep.
+- **Read-your-writes**: `::dlo/databases` is now `{schema -> atom<db>}`.
+  `wrap-env`/`pathom-plugin` seed atoms per request; `save-form!`/`delete-entity!`
+  `reset!` to the report's `:db-after` (idiomatic Datalevin — db is a live
+  `@conn` ref; report carries `:db-after`). Resolvers deref leniently (bare `db`
+  still accepted). New helper `pp/refresh-db-snapshot!`.
+- **Bug fixed** (caught by the integration tests): generated batch id-resolvers
+  assumed a vector input; Pathom 2 passes a single input map for a lone entity
+  and expects a single map back. Now detect single-vs-batch and respond in kind.
+- Pruned 2 superseded happy-path unit tests (`save-middleware-basic`,
+  `save-then-resolve-round-trip`); kept edge cases (empty delta, nil removal,
+  multi-tempid, handler composition, to-many refs, tempids contract, delete no-op).
+- Reference wiring: `~/src/fulcro-rad-datomic` datomic_spec.clj is the P2+P3
+  parser-test template; datalevin's `:db-after` mechanism verified against
+  `~/src/datalevin` (conn.clj TxReport, `d/db` = `@conn`).
+- Suite: **57 tests, 284 assertions, 0 failures**; lint 0 warnings.
+
+Before that:
+
 **Dual Pathom 2/3 support (mirror datomic/xtdb)** — the adapter is now
 Pathom-version-agnostic with **zero hard pathom dependency**. Verified: main
 namespaces load with pathom3 fully absent from the classpath.

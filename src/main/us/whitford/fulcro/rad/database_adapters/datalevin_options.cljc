@@ -7,7 +7,14 @@
   ::connections)
 
 (def databases
-  "Key in Pathom env for map of schema name -> current database value"
+  "Key in Pathom env for the per-request database snapshots: a map of
+   `schema-name -> atom<db>`. Each value is an **atom** holding the current
+   Datalevin database for that schema. `wrap-env` / `pathom-plugin` seed the
+   atoms at request start; the save/delete middleware `reset!` the relevant atom
+   to the transaction's `:db-after` so resolvers running later in the same
+   request read their own writes (read-your-writes) while keeping a stable,
+   request-scoped snapshot. Resolvers deref these values, tolerating a plain
+   `db` for backward compatibility."
   ::databases)
 
 ;; Attribute options

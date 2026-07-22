@@ -250,45 +250,9 @@
 ;; Save Middleware Tests
 ;; ================================================================================
 
-(deftest save-middleware-basic
-  (testing "saves new entity to database"
-    (tu/with-test-conn [conn]
-      (let [tid        (tempid/tempid)
-            real-id    (new-uuid)
-            delta      {[:account/id tid] {:account/id {:before nil :after real-id}
-                                           :account/name {:before nil :after "Jane Doe"}
-                                           :account/email {:before nil :after "jane@example.com"}
-                                           :account/active? {:before nil :after true}}}
-            env        {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
-                        ::dlo/connections     {:test conn}
-                        ::form/params         {::form/delta delta}}
-            middleware (dl/wrap-datalevin-save)
-            result     (middleware env)]
-
-        (is (map? result))
-        (is (= real-id (get (:tempids result) tid)))
-
-        (let [entity (d/pull (d/db conn) '[*] [:account/id real-id])]
-          (is (= real-id (:account/id entity)))
-          (is (= "Jane Doe" (:account/name entity)))
-          (is (= "jane@example.com" (:account/email entity)))
-          (is (true? (:account/active? entity)))))))
-
-  (testing "updates existing entity"
-    (tu/with-test-conn [conn]
-      (let [real-id    (new-uuid)
-            _          (d/transact! conn [{:account/id real-id
-                                           :account/name "Original"
-                                           :account/email "original@example.com"}])
-            delta      {[:account/id real-id] {:account/name {:before "Original" :after "Updated"}}}
-            env        {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
-                        ::dlo/connections     {:test conn}
-                        ::form/params         {::form/delta delta}}
-            middleware (dl/wrap-datalevin-save)
-            _          (middleware env)
-            entity     (d/pull (d/db conn) '[*] [:account/id real-id])]
-        (is (= "Updated" (:account/name entity)))
-        (is (= "original@example.com" (:account/email entity)) "Unchanged field preserved")))))
+;; NOTE: basic happy-path save (new + update) is covered end-to-end through real
+;; Pathom 2 and Pathom 3 parsers in pathom_integration_test.clj. The unit tests
+;; below focus on middleware behaviors integration tests don't exercise.
 
 (deftest save-middleware-with-handler
   (testing "composes with other middleware"
@@ -392,31 +356,9 @@
         (is (some #(= item1-id (:item/id %)) items) "Item 1 should be linked")
         (is (some #(= item2-id (:item/id %)) items) "Item 2 should be linked")))))
 
-(deftest save-then-resolve-round-trip
-  (testing "generated resolver returns updated data after a save via middleware"
-    (tu/with-test-conn [conn]
-      (let [id               (new-uuid)
-            _                (d/transact! conn [{:account/id   id
-                                                 :account/name "Before Save"}])
-            resolvers        (dl/generate-resolvers tu/all-test-attributes :test)
-            account-resolver (first (filter #(= :account/id (first (tu/resolver-input %)))
-                                            resolvers))
-            resolve-name     (fn []
-                               (let [env (assoc (tu/mock-resolver-env {:test conn})
-                                                ::attr/key->attribute
-                                                (tu/key->attribute-map tu/all-test-attributes))]
-                                 (:account/name (first ((tu/resolver-fn account-resolver) env [{:account/id id}])))))
-            _                (is (= "Before Save" (resolve-name))
-                                 "Resolver returns the seeded value before save")
-            delta            {[:account/id id] {:account/name {:before "Before Save"
-                                                               :after  "After Save"}}}
-            env              {::attr/key->attribute (tu/key->attribute-map tu/all-test-attributes)
-                              ::dlo/connections     {:test conn}
-                              ::form/params         {::form/delta delta}}
-            middleware       (dl/wrap-datalevin-save)]
-        (middleware env)
-        (is (= "After Save" (resolve-name))
-            "Resolver returns updated value after save (save path ↔ query path coherence)")))))
+;; NOTE: save -> resolve round-trip (save path ↔ query path coherence, including
+;; read-your-writes) is covered end-to-end through real Pathom 2 and Pathom 3
+;; parsers in pathom_integration_test.clj.
 
 ;; ================================================================================
 ;; Tempids Tests (CRITICAL - Fulcro RAD requires :tempids in all form operation results)

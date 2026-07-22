@@ -24,9 +24,13 @@
    - base-wrapper: optional function to further wrap the env
    - database-mapper: function that takes env and returns map of schema -> connection
 
-   Returns a function that wraps the environment with database values, adding:
-   - `dlo/connections`: the result of database-mapper
-   - `dlo/databases`:   a map from schema name to current database values"
+   Returns a function that wraps the environment, adding:
+   - `dlo/connections`: the result of database-mapper (schema -> connection)
+   - `dlo/databases`:   a map from schema name to an **atom** holding the current
+     Datalevin database value. Storing an atom (rather than a bare db) lets the
+     save/delete middleware publish the post-transaction `:db-after` into the
+     same request env, so resolvers running later in the request read their own
+     writes. See `refresh-db-snapshot!`."
   ([database-mapper]
    (wrap-env nil database-mapper))
   ([base-wrapper database-mapper]
@@ -34,13 +38,28 @@
      (let [connections (database-mapper env)
            databases   (reduce-kv
                         (fn [m schema conn]
-                          (assoc m schema (d/db conn)))
+                          (assoc m schema (atom (d/db conn))))
                         {}
                         connections)]
        (cond-> (assoc env
                       dlo/connections connections
                       dlo/databases databases)
          base-wrapper (base-wrapper))))))
+
+(defn refresh-db-snapshot!
+  "Publish `db-after` into the atom-backed `dlo/databases` snapshot for `schema`
+   in `env`, so resolvers running later in the same Pathom request read their own
+   writes while keeping a stable, request-scoped view.
+
+   Called by the save/delete middleware with the transaction report's
+   `:db-after`. No-op when `db-after` is nil or when `env` has no atom snapshot
+   for `schema` (e.g. a save-only env with no read wiring). Returns nil."
+  [env schema db-after]
+  (when db-after
+    (when-let [a (get (dlo/databases env) schema)]
+      (when (instance? clojure.lang.IAtom a)
+        (reset! a db-after))))
+  nil)
 
 (defn pathom-plugin
   "Create a **Pathom 2** plugin that adds Datalevin database support.

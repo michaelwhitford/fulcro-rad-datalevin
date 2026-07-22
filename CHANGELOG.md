@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Read-your-writes in the save/delete mutation (atom-backed db snapshot)
+- `::dlo/databases` is now `{schema -> atom<db>}` (was `{schema -> db}`).
+  `wrap-env` / `pathom-plugin` seed the atoms per request; `save-form!` and
+  `delete-entity!` `reset!` the relevant atom to the transaction report's
+  `:db-after`. As a result, a `form/save-form` mutation's output query resolves
+  the just-saved (or updated) entity **within the same request** — the mutation
+  returns the saved attributes, not just `:tempids` — matching the datomic/xtdb
+  adapters. Uses Datalevin's native `:db-after` (idiomatic; the report is already
+  in hand) for read-your-writes plus request-scoped snapshot consistency.
+- Resolvers deref the snapshot leniently (a bare `db` is still accepted), so
+  callers passing a plain db in a hand-built env continue to work.
+
+#### Real Pathom 2 + Pathom 3 integration tests
+- New `pathom_integration_test.clj` drives the adapter through **real** RAD
+  parsers — `pathom/new-parser` (Pathom 2) and `pathom3/new-processor`
+  (Pathom 3) — with full CRUD parity: id-resolver read, all-ids read,
+  `form/save-form` new + update (asserting the returned entity → proves
+  read-your-writes), and `form/delete-entity`. `com.wsscode/pathom` (2) added as
+  a test-only dependency alongside pathom3.
+
 #### Dual Pathom 2 / Pathom 3 Support (library is now Pathom-version-agnostic)
 - **The adapter no longer hard-depends on any Pathom version.** `pathom3` moved
   out of `:deps` into the `:test`/`:run-tests` aliases only. The main namespaces
@@ -83,6 +103,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and permanent failures like `:transact/attr-pred` must not be retried).
 
 ### Fixed
+
+#### Batch id-resolvers now handle Pathom 2 single-input calls
+- Generated id-resolvers assumed their input was always a vector of inputs (true
+  for Pathom 3 and batched Pathom 2). Pathom 2 invokes a batch resolver with a
+  **single input map** for a lone entity and expects a single map back; the old
+  code iterated the map's entries and returned `[{}]`, which Pathom 2 rejected as
+  an "Invalid resolve response". Resolvers now detect single-vs-batch input and
+  respond in kind. Surfaced by the new real-parser integration tests.
 
 #### Delete Transactions No Longer Swallow Failures
 - `delete-entity!` now propagates transaction failures via `ex-info`

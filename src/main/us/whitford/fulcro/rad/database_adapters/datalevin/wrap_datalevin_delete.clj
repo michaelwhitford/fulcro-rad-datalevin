@@ -8,7 +8,8 @@
    [datalevin.core :as d]
    [taoensso.encore :as enc]
    [taoensso.timbre :as log]
-   [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]))
+   [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]
+   [us.whitford.fulcro.rad.database-adapters.datalevin.pathom-plugin :as pp]))
 
 (defn- native-ident?
   "Returns true if the delete's identity key uses a Datalevin native :db/id."
@@ -35,8 +36,10 @@
         (do
           (log/info "Deleting" ident)
           (try
-            (d/transact! conn [[:db/retractEntity eid]])
-            {}
+            (let [report (d/transact! conn [[:db/retractEntity eid]])]
+              ;; Publish the post-delete db for read-your-writes within the request.
+              (pp/refresh-db-snapshot! env schema (:db-after report))
+              {})
             (catch Exception e
               (log/error e "Datalevin delete transaction failed for" ident)
               (throw (ex-info "Datalevin delete transaction failed"
