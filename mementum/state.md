@@ -185,10 +185,10 @@ here in `state.md`; `CHANGELOG.md` records shipped changes.)
 
 ## Blocking / open
 
-- Branch is ahead of origin, **unpushed**. Push when ready (first push will
-  exercise ci.yml).
-- `CLOJARS_USERNAME` / `CLOJARS_PASSWORD` secrets must be added to the GitHub
-  repo before pushing a release tag.
+- **Release deferred by human decision** — do NOT tag or deploy. CI is green,
+  Clojars secrets are set, the pipeline is armed; the human will create and
+  push the `v1.0.0-RC1` tag when ready for jars to go live. Before tagging:
+  cut a `## [1.0.0-RC1]` section from `[Unreleased]` in CHANGELOG.md.
 
 ## Key files
 
