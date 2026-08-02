@@ -15,6 +15,25 @@ Build/test: `clojure -M:run-tests` (kaocha). Focus one ns:
 
 ## Now
 
+**Full-text Phase 2 COMPLETE (generated search resolvers).**
+- `search-resolver` in `generate_resolvers.clj` (mirrors `all-ids-resolver`):
+  emitted per entity type with ≥1 `::dlo/fulltext?` attr; output
+  `{:<ns>/search [idents…]}` in relevance order (`:refs+scores` + desc sort);
+  params from `(:query-params env)` (`:query :top :limit :offset`);
+  blank/missing query → `[]`; native-id aware (eid ≡ id); domains via
+  `search-domains-for` (mirrors schema derivation incl. user domains).
+- Wired as third resolver type in `generate-resolvers` (flows to P2 and, via
+  RAD auto-convert, P3; `generate-resolvers-pathom3` inherits it).
+- 7 new tests incl. **real P3 processor round-trip** (params + field auto-fill
+  by id-resolver) and native-id path. Suite: **70 tests / 309 assertions /
+  0 failures**, lint 0.
+- Next: **Phase 3** — RAD report integration + pagination + README docs
+  (client-side `ro/source-attribute :<ns>/search` + search control → params;
+  spike already proved the server seam). Also consider surfacing scores later
+  (design §5 open decision).
+
+Before that:
+
 **Full-text Phase 1 COMPLETE (schema + connection).**
 - `::dlo/fulltext?` option (bool ∨ opts-map) in `datalevin_options.cljc`.
 - `attr->schema`: emits `:db/fulltext true` + derived `:db.fulltext/domains

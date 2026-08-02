@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Generated `:<entity>/search` resolvers — Phase 2
+- `generate-resolvers` now emits a third resolver type: for every entity type
+  with at least one `::dlo/fulltext?` attribute, a parameterized full-text
+  search resolver outputting `{:<ns>/search [{id-attr ...} ...]}` — idents in
+  **relevance order** (descending score), with fields auto-filled by the
+  existing batched id-resolver:
+  `[{(:account/search {:query "fox"}) [:account/id :account/name]}]`.
+- Params are read from `(:query-params env)` (populated by both RAD parsers
+  from the EQL join params / a load's `{:params ...}}`): `:query` (string,
+  boolean expression vector, or `{:phrase "..."}`), `:top`, `:limit`,
+  `:offset`. Missing/blank `:query` resolves to an empty list.
+- Relevance ordering uses `{:display :refs+scores}` + explicit descending
+  sort (Datalog set semantics do not preserve engine rank order). Native-id
+  entities return the matched eid as the id; searches the entity's derived
+  domain(s), honoring user-specified `:db.fulltext/domains`/`autoDomain`.
+
 #### Full-text search foundation (`::dlo/fulltext?`) — Phase 1
 - New attribute option `::dlo/fulltext?` (value `true` or a search-domain
   options map such as `{:index-position? true}` for phrase/proximity search).

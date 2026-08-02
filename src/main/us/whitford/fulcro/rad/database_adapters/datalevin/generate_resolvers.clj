@@ -3,6 +3,7 @@
   {:clj-kondo/config '{:linters {:unresolved-symbol {:level :off}}}}
   (:require
    [clojure.spec.alpha :as s]
+   [clojure.string :as str]
    [clojure.walk :as walk]
    [com.fulcrologic.guardrails.core :refer [>defn => ?]]
    [com.fulcrologic.rad.attributes :as attr]
@@ -338,6 +339,92 @@
                  ids (mapv (fn [[id]] {qualified-key id}) result)]
              {all-ids-key ids}))))}))
 
+(defn- search-domains-for
+  "The set of Datalevin search domains covering an entity's full-text
+   attributes, mirroring the schema derivation in start-databases: the
+   attribute namespace by default, or the user's native :db.fulltext/domains /
+   :db.fulltext/autoDomain from ::dlo/attribute-schema."
+  [fulltext-attrs entity-ns]
+  (into []
+        (distinct
+         (mapcat (fn [{::dlo/keys [attribute-schema] ::attr/keys [qualified-key]}]
+                   (cond
+                     (:db.fulltext/autoDomain attribute-schema)
+                     [(subs (str qualified-key) 1)]
+
+                     (seq (:db.fulltext/domains attribute-schema))
+                     (:db.fulltext/domains attribute-schema)
+
+                     :else
+                     [entity-ns]))
+                 fulltext-attrs))))
+
+(defn search-resolver
+  "Generates a full-text search resolver for an entity type, or nil when the
+   entity has no `::dlo/fulltext?` attributes.
+
+   Output: `{:<ns>/search [{id-attr ...} ...]}` — idents in RELEVANCE order
+   (descending full-text score). Fields are filled by the existing batched
+   id-resolver via a join query, e.g.
+   `[{(:account/search {:query \"fox\"}) [:account/id :account/name]}]`.
+
+   Params — read from `(:query-params env)`, which both RAD parsers populate
+   from the EQL join params (`{:params {:query ...}}` on a load):
+   - `:query`  (required) — the search query: a string, a boolean expression
+     vector like `[:and \"x\" [:not \"y\"]]`, or `{:phrase \"...\"}` (phrase
+     search requires the attribute to be declared
+     `::dlo/fulltext? {:index-position? true}`).
+   - `:top`    — cap on engine results (Datalevin default 10).
+   - `:limit` / `:offset` — pagination within the result window.
+   A missing or blank `:query` resolves to an empty list (no throw), so a
+   report with an empty search control renders empty.
+
+   Relevance ordering is obtained via `{:display :refs+scores}` plus an
+   explicit descending sort — Datalog's set semantics do NOT preserve the
+   engine's rank order (runtime-proven; see the full-text design doc).
+
+   Native-id aware: for `::dlo/native-id?` entities the matched eid IS the id;
+   otherwise the identity attribute's value is pulled per matched eid."
+  [all-attributes {::attr/keys [qualified-key] :keys [::attr/schema] :as id-attribute}]
+  (let [entity-ns      (namespace qualified-key)
+        search-key     (keyword entity-ns "search")
+        is-native-id?  (native-id? id-attribute)
+        fulltext-attrs (filterv #(and (= schema (::attr/schema %))
+                                      (= entity-ns (namespace (::attr/qualified-key %)))
+                                      (get % ::dlo/fulltext?))
+                                all-attributes)
+        domains        (search-domains-for fulltext-attrs entity-ns)]
+    (when (seq fulltext-attrs)
+      (log/info "Building search resolver for" qualified-key "->" search-key
+                "domains" domains)
+      {:com.wsscode.pathom.connect/sym    (symbol (str entity-ns "-search-resolver"))
+       :com.wsscode.pathom.connect/output [{search-key [qualified-key]}]
+       :com.wsscode.pathom.connect/resolve
+       (fn [{::dlo/keys [databases] :as env} _input]
+         (let [{:keys [query top limit offset]} (:query-params env)]
+           (if (or (nil? query) (and (string? query) (str/blank? query)))
+             {search-key []}
+             (let [db     (db-value databases schema)
+                   opts   (cond-> {:domains domains
+                                   :display :refs+scores}
+                            top    (assoc :top top)
+                            limit  (assoc :limit limit)
+                            offset (assoc :offset offset))
+                   scored (util/q '[:find ?e ?s
+                                    :in $ ?q ?opts
+                                    :where [(fulltext $ ?q ?opts) [[?e _ _ ?s]]]]
+                                  db query opts)
+                   eids   (->> scored (sort-by second >) (map first) distinct)
+                   idents (if is-native-id?
+                            (mapv (fn [eid] {qualified-key eid}) eids)
+                            (into []
+                                  (keep (fn [eid]
+                                          (when-some [id (get (util/pull db [qualified-key] eid)
+                                                              qualified-key)]
+                                            {qualified-key id})))
+                                  eids))]
+               {search-key idents}))))})))
+
 (>defn generate-resolvers
   "Generate all of the resolvers that make sense for the given database config. This should be passed
   to your Pathom parser to register resolvers for each of your schemas.
@@ -352,9 +439,12 @@
      you build a Pathom 3 index yourself, use `generate-resolvers-pathom3` (or
      RAD's `convert-resolvers`) to get native Pathom 3 resolver records.
 
-   Generates two types of resolvers:
+   Generates three types of resolvers:
    1. ID resolvers: resolve entity data by ID (e.g., :account/id -> account data)
-   2. All-IDs resolvers: resolve all entity IDs (e.g., :all-accounts -> [{:account/id ...} ...])"
+   2. All-IDs resolvers: resolve all entity IDs (e.g., :all-accounts -> [{:account/id ...} ...])
+   3. Search resolvers (only for entity types with ::dlo/fulltext? attributes):
+      parameterized full-text search returning relevance-ordered idents
+      (e.g., :account/search — see search-resolver)"
   [attributes schema]
   [::attr/attributes keyword? => sequential?]
   (let [attributes    (filter #(= schema (::attr/schema %)) attributes)
@@ -379,8 +469,10 @@
                           []
                           entity-id->attributes)
         ;; Generate all-IDs resolvers (all entities of a type)
-        all-ids-resolvers (mapv (partial all-ids-resolver attributes) identity-attributes)]
-    (concat entity-resolvers all-ids-resolvers)))
+        all-ids-resolvers (mapv (partial all-ids-resolver attributes) identity-attributes)
+        ;; Generate search resolvers (entity types with ::dlo/fulltext? attrs)
+        search-resolvers  (into [] (keep (partial search-resolver attributes)) identity-attributes)]
+    (concat entity-resolvers all-ids-resolvers search-resolvers)))
 
 (defn generate-resolvers-pathom3
   "Like `generate-resolvers`, but returns native **Pathom 3** resolver records

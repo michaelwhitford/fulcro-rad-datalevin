@@ -9,6 +9,7 @@
    [clojure.test :refer [deftest testing is]]
    [com.fulcrologic.rad.attributes :as attr]
    [com.fulcrologic.rad.ids :refer [new-uuid]]
+   [com.fulcrologic.rad.pathom3 :as p3]
    [datalevin.core :as d]
    [us.whitford.fulcro.rad.database-adapters.datalevin :as dl]
    [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]
@@ -146,6 +147,152 @@
               titles (mapv #(:doc/title (d/pull db '[:doc/title] %)) hits)]
           (is (= ["one"] titles)
               "only the doc containing the exact phrase matches"))))))
+
+;; ================================================================================
+;; Phase 2 — generated :<entity>/search resolver
+;; ================================================================================
+
+(defn- search-resolver-in
+  "Find the resolver whose output key is `search-key` among generated resolvers."
+  [resolvers search-key]
+  (first (filter #(= [{search-key [:doc/id]}] (tu/resolver-output %)) resolvers)))
+
+(defn- run-search
+  "Call the generated :doc/search resolver directly with a hand-built env."
+  [conn query-params]
+  (let [resolvers (dl/generate-resolvers doc-attributes :search-test)
+        resolver  (search-resolver-in resolvers :doc/search)
+        resolve-f (tu/resolver-fn resolver)]
+    (resolve-f {::dlo/databases {:search-test (d/db conn)}
+                :query-params   query-params}
+               {})))
+
+(deftest search-resolver-generation-gating
+  (testing "a :<ns>/search resolver is generated only when fulltext attrs exist"
+    (let [with-ft    (dl/generate-resolvers doc-attributes :search-test)
+          without-ft (dl/generate-resolvers tu/all-test-attributes :test)]
+      (is (some? (search-resolver-in with-ft :doc/search))
+          "entity with ::dlo/fulltext? attrs gets a search resolver")
+      (is (not-any? #(= 'account-search-resolver (:com.wsscode.pathom.connect/sym %))
+                    without-ft)
+          "entity without fulltext attrs gets none"))))
+
+(deftest search-resolver-relevance-ordered-idents
+  (testing "the resolver returns idents in descending relevance order"
+    (with-search-db*
+      (fn [conn]
+        (let [id1 (new-uuid) id2 (new-uuid) id3 (new-uuid)]
+          (d/transact! conn
+                       [{:doc/id id1 :doc/title "one"
+                         :doc/body "the quick red fox jumps"}
+                        {:doc/id id2 :doc/title "two"
+                         :doc/body "fox fox fox everywhere a fox"}
+                        {:doc/id id3 :doc/title "three"
+                         :doc/body "lazy brown dog sleeps"}])
+          (is (= {:doc/search [{:doc/id id2} {:doc/id id1}]}
+                 (run-search conn {:query "fox"}))
+              "fox-heavy doc ranks first; idents only; dog doc excluded"))))))
+
+(deftest search-resolver-top-param
+  (testing "the :top param caps engine results"
+    (with-search-db*
+      (fn [conn]
+        (seed-docs! conn)
+        (is (= 1 (count (:doc/search (run-search conn {:query "fox" :top 1}))))
+            ":top 1 yields a single ident")))))
+
+(deftest search-resolver-blank-query
+  (testing "missing or blank :query resolves to an empty list without throwing"
+    (with-search-db*
+      (fn [conn]
+        (seed-docs! conn)
+        (is (= {:doc/search []} (run-search conn {}))
+            "no :query param → empty result")
+        (is (= {:doc/search []} (run-search conn {:query "  "}))
+            "blank :query → empty result")))))
+
+(deftest search-resolver-phrase-query
+  (testing "a {:phrase ...} query works through the generated resolver"
+    (with-search-db*
+      (fn [conn]
+        (let [id1 (new-uuid)]
+          (d/transact! conn [{:doc/id id1 :doc/title "one"
+                              :doc/body "the quick red fox jumps"}
+                             {:doc/id (new-uuid) :doc/title "two"
+                              :doc/body "red herring and quick sand fox"}])
+          (is (= {:doc/search [{:doc/id id1}]}
+                 (run-search conn {:query {:phrase "quick red fox"}}))
+              "only the exact-phrase doc matches"))))))
+
+(deftest search-resolver-through-real-pathom3-processor
+  (testing "params flow through a real RAD P3 processor and fields auto-fill"
+    (with-search-db*
+      (fn [conn]
+        (let [id1 (new-uuid) id2 (new-uuid)]
+          (d/transact! conn
+                       [{:doc/id id1 :doc/title "one"
+                         :doc/body "the quick red fox jumps"}
+                        {:doc/id id2 :doc/title "two"
+                         :doc/body "fox fox fox everywhere a fox"}])
+          (let [env-mw    (-> (attr/wrap-env doc-attributes)
+                              (dl/wrap-env (fn [_env] {:search-test conn})))
+                processor (p3/new-processor {} env-mw []
+                                            [(dl/generate-resolvers doc-attributes :search-test)])
+                result    (processor {}
+                                     [(list {:doc/search [:doc/id :doc/title]}
+                                            {:query "fox"})])]
+            (is (= [{:doc/id id2 :doc/title "two"}
+                    {:doc/id id1 :doc/title "one"}]
+                   (:doc/search result))
+                "relevance-ordered idents with fields filled by the id-resolver")))))))
+
+;; ================================================================================
+;; Phase 2 — native-id entity search
+;; ================================================================================
+
+(def npage-id
+  {::attr/qualified-key :npage/id
+   ::attr/type          :long
+   ::attr/schema        :search-native-test
+   ::attr/identity?     true
+   ::dlo/native-id?     true})
+
+(def npage-text
+  {::attr/qualified-key :npage/text
+   ::attr/type          :string
+   ::attr/schema        :search-native-test
+   ::attr/identities    #{:npage/id}
+   ::dlo/fulltext?      true})
+
+(deftest search-resolver-native-id
+  (testing "for native-id entities the matched eid is returned as the id"
+    (let [path (str "/tmp/datalevin-search-native-" (new-uuid))
+          conn (dl/start-database! {:path       path
+                                    :schema     :search-native-test
+                                    :attributes [npage-id npage-text]})]
+      (try
+        (d/transact! conn [{:npage/text "aardvark alpha"}
+                           {:npage/text "aardvark beta"}])
+        (let [resolvers (dl/generate-resolvers [npage-id npage-text] :search-native-test)
+              resolver  (first (filter #(= 'npage-search-resolver
+                                           (:com.wsscode.pathom.connect/sym %))
+                                       resolvers))
+              result    ((tu/resolver-fn resolver)
+                         {::dlo/databases {:search-native-test (d/db conn)}
+                          :query-params   {:query "aardvark"}}
+                         {})
+              idents    (:npage/search result)
+              db        (d/db conn)]
+          (is (= 2 (count idents)) "both native-id docs match")
+          (is (every? pos-int? (map :npage/id idents))
+              "native ids are raw entity ids")
+          (is (= #{"aardvark alpha" "aardvark beta"}
+                 (set (map #(:npage/text (d/pull db '[:npage/text] (:npage/id %)))
+                           idents)))
+              "the returned eids pull back the matched docs"))
+        (finally
+          (dl/stop-database! conn)
+          (tu/cleanup-path path))))))
 
 (deftest fulltext-save-then-search
   (testing "an entity written through the adapter's save path is searchable"

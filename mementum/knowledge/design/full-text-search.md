@@ -11,10 +11,11 @@ related:
 
 # Design: Full-Text Search for fulcro-rad-datalevin
 
-> Status: **PHASE 0 SPIKE COMPLETE** (datalevin-test-app
-> `src/test/app/fulltext_spike_test.clj`, commit 9e4adb0). RISK #1 resolved;
-> one design correction found (relevance order — see §6). Phases 1–3 not yet
-> implemented.
+> Status: **PHASES 0–2 COMPLETE.** Phase 0 spike: datalevin-test-app
+> `fulltext_spike_test.clj` (9e4adb0). Phase 1 (schema + conn): `::dlo/fulltext?`
+> + `search-conn-opts`. Phase 2 (resolver): `search-resolver` in
+> `generate_resolvers.clj`, tests in `search_test.clj`. Remaining: Phase 3
+> (RAD report integration + pagination + docs).
 
 ## Memory anchors (6 interrogatives)
 
