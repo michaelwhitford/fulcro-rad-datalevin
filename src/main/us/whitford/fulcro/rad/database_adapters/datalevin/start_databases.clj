@@ -1,12 +1,12 @@
 (ns us.whitford.fulcro.rad.database-adapters.datalevin.start-databases
   "Database lifecycle management for Datalevin adapter."
   (:require
-   [clojure.string :as str]
    [com.fulcrologic.guardrails.core :refer [>defn =>]]
    [com.fulcrologic.rad.attributes :as attr]
    [datalevin.core :as d]
    [taoensso.timbre :as log]
-   [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]))
+   [us.whitford.fulcro.rad.database-adapters.datalevin-options :as dlo]
+   [us.whitford.fulcro.rad.database-adapters.datalevin.utilities :as util]))
 
 ;; ================================================================================
 ;; Type Mapping
@@ -35,11 +35,10 @@
 ;; Schema Generation
 ;; ================================================================================
 
-(defn- vec-attr-domain
+(def ^:private vec-attr-domain
   "Convert a qualified keyword to a Datalevin vector domain string.
-   Matches datalevin.vector/attr-domain: replaces '/' with '_'."
-  [qualified-key]
-  (str/replace (str (namespace qualified-key) "/" (name qualified-key)) "/" "_"))
+   Shared with generate-resolvers; see utilities/vec-attr-domain."
+  util/vec-attr-domain)
 
 (defn- search-attr-domain
   "Derive the search domain for a full-text attribute: the attribute's
@@ -79,11 +78,14 @@
                                 (not (contains? attribute-schema :db.fulltext/domains))
                                 (not (contains? attribute-schema :db.fulltext/autoDomain)))
                            (assoc :db.fulltext/domains [(search-attr-domain qualified-key)]))
-          ;; For :vec attributes, strip :db.vec/dimensions — it's not a valid
-          ;; Datalevin schema key. Dimensions are passed separately as vector-domains
-          ;; connection opts. See vec-conn-opts.
+          ;; For :vec attributes, strip :db.vec/dimensions and
+          ;; :db.vec/metric-type — they are not valid Datalevin schema keys.
+          ;; They are passed separately as :vector-domains connection opts.
+          ;; See vec-conn-opts. (:db.vec/domains IS a valid schema key and
+          ;; passes through.)
           clean-attr-schema (if (= :vec type)
-                              (dissoc attribute-schema :db.vec/dimensions)
+                              (dissoc attribute-schema
+                                      :db.vec/dimensions :db.vec/metric-type)
                               attribute-schema)]
       (when (seq base-schema)
         [qualified-key (merge base-schema clean-attr-schema)]))))
@@ -101,10 +103,14 @@
                                 (= :vec (::attr/type %)))
                    attributes)
         domains  (reduce (fn [acc attr]
-                           (let [dims   (get-in attr [::dlo/attribute-schema :db.vec/dimensions])
-                                 domain (vec-attr-domain (::attr/qualified-key attr))]
-                             (if dims
-                               (assoc acc domain {:dimensions dims})
+                           (let [{:db.vec/keys [dimensions metric-type]}
+                                 (get attr ::dlo/attribute-schema)
+                                 domain (vec-attr-domain (::attr/qualified-key attr))
+                                 opts   (cond-> {}
+                                          dimensions  (assoc :dimensions dimensions)
+                                          metric-type (assoc :metric-type metric-type))]
+                             (if (seq opts)
+                               (assoc acc domain opts)
                                acc)))
                    {} relevant)]
     (when (seq domains)

@@ -7,8 +7,9 @@ A database adapter plugin for https://fulcro.fulcrologic.com/[Fulcro RAD] that p
 * Automatic schema generation from RAD attributes
 * Save and delete middleware for RAD forms
 * Works with *both Pathom 2 and Pathom 3* — the adapter has no hard dependency on either; you bring your own
-* Automatic resolver generation (id-resolvers, all-ids resolvers, and full-text search resolvers)
+* Automatic resolver generation (id-resolvers, all-ids resolvers, full-text search resolvers, and vector similarity resolvers)
 * Full-text search: declare `::dlo/fulltext?` on an attribute and get schema, search-domain config, and a relevance-ordered `:<entity>/search` resolver automatically
+* Vector similarity search: declare a `:vec` attribute and get an `:<entity>/similar` nearest-neighbor resolver automatically — pair with full-text for hybrid keyword + semantic search
 * Read-your-writes: a form save's mutation returns the just-saved entity within the same request
 * Support for all RAD attribute types, including `:enum` and `:vec` (vector / HNSW index)
 * Native `:db/id` identity support (`::dlo/native-id?`)
@@ -489,14 +490,61 @@ For transaction-level assertions (spanning attributes/entities), append a
 predicate runs against `db-after` and aborts the transaction on any falsey
 result.
 
-=== Vector Attributes (`:vec`)
+=== Vector Attributes (`:vec`) and Similarity Search
 
 RAD attributes of type `:vec` map to `:db.type/vec` and build a Datalevin
-HNSW vector index. The index configuration (notably `:dimensions`) lives on the
-*connection*, not the schema; the adapter derives it automatically and passes
-`:vector-domains` to `d/get-conn`. Put `:db.vec/dimensions` in the attribute's
-`::dlo/attribute-schema` and the adapter strips it from the schema and moves it
-to the connection options.
+HNSW vector index. The index configuration (`:dimensions`, `:metric-type`)
+lives on the *connection*, not the schema; the adapter derives it automatically
+and passes `:vector-domains` to `d/get-conn`. Put `:db.vec/dimensions` (and
+optionally `:db.vec/metric-type`) in the attribute's `::dlo/attribute-schema`
+and the adapter strips them from the schema and moves them to the connection
+options:
+
+[source,clojure]
+----
+(defattr embedding :account/embedding :vec
+  {ao/identities            #{:account/id}
+   ::dlo/attribute-schema   {:db.vec/dimensions  768
+                             :db.vec/metric-type :cosine}})
+----
+
+Every entity type with at least one `:vec` attribute automatically gets an
+`:<entity>/similar` resolver — parameterized nearest-neighbor search returning
+idents in *similarity order* (nearest first), with columns filled by the
+batched id-resolver:
+
+[source,clojure]
+----
+;; EQL (what a load/report sends):
+[{(:account/similar {:vector query-embedding :top 10}) [:account/id :account/name]}]
+;; => {:account/similar [{:account/id #uuid "..." :account/name "..."} ...]}
+----
+
+Parameters (read from `(:query-params env)`):
+
+[cols="1,3"]
+|===
+| Param | Meaning
+
+| `:vector`
+| Required. The query embedding — a sequence of numbers matching the
+  attribute's `:db.vec/dimensions`. Missing resolves to an empty list.
+
+| `:attribute`
+| Optional qualified keyword narrowing the search to one `:vec` attribute
+  (e.g. `:account/embedding`). Defaults to all of the entity's vector domains
+  (which must then share dimensions).
+
+| `:top`
+| Cap on neighbors returned (Datalevin default 10).
+|===
+
+Vector indexing is synchronous — saved entities are immediately searchable.
+Native-id entities are supported (the matched eid is the id).
+
+*Hybrid search*: combine `:<entity>/search` (keyword relevance) and
+`:<entity>/similar` (semantic similarity) over the same entities — issue both
+loads and merge/re-rank client-side, or use two report sections.
 
 === Full-Text Search (`::dlo/fulltext?`)
 

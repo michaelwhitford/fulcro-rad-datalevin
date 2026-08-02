@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Vector similarity search (`:<entity>/similar` resolvers)
+- `generate-resolvers` emits a fourth resolver type: for every entity type
+  with at least one `:vec` attribute, a parameterized nearest-neighbor
+  resolver outputting `{:<ns>/similar [{id-attr ...} ...]}` — idents in
+  **similarity order** (ascending vector distance), with fields auto-filled by
+  the batched id-resolver:
+  `[{(:account/similar {:vector embedding :top 10}) [:account/id :account/name]}]`.
+- Params from `(:query-params env)`: `:vector` (required query embedding),
+  `:attribute` (optional narrowing to one `:vec` attribute), `:top`. Missing
+  `:vector` resolves to an empty list. Uses Datalevin's `vec-neighbors` with
+  `{:display :refs+dists}` + explicit ascending sort (Datalog set semantics
+  do not preserve engine rank order). Native-id entities supported.
+- `vec-conn-opts` now also derives `:metric-type` from
+  `:db.vec/metric-type` in `::dlo/attribute-schema` (stripped from the
+  schema alongside `:db.vec/dimensions`), so cosine/euclidean/etc. can be
+  declared per attribute.
+- Pairs with the full-text `:<entity>/search` resolver for hybrid
+  keyword + semantic search.
+
 #### Full-text search documentation and report integration — Phase 3
 - README gains a "Full-Text Search" section: `::dlo/fulltext?` declaration,
   generated-resolver EQL, parameter reference (`:query`/`:top`/`:limit`/`:offset`),

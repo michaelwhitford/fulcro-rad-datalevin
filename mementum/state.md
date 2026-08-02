@@ -15,6 +15,30 @@ Build/test: `clojure -M:run-tests` (kaocha). Focus one ns:
 
 ## Now
 
+**VECTOR SIMILARITY SEARCH SHIPPED — the final 1.0 feature. Hybrid search
+complete (keyword `:<ns>/search` + semantic `:<ns>/similar`).**
+- `similar-resolver` in `generate_resolvers.clj` (4th resolver type): emitted
+  per entity with ≥1 `:vec` attr; output `{:<ns>/similar [idents…]}` in
+  ascending-distance order (`vec-neighbors` + `{:display :refs+dists}` +
+  explicit sort — same Datalog rank-order trap as fulltext, source-verified in
+  `~/src/datalevin/src/datalevin/built_ins.clj`). Params: `:vector` (required),
+  `:attribute` (optional narrowing), `:top`. Missing vector → `[]`.
+  Native-id aware. Domains via `util/vec-attr-domain` (moved to utilities.clj,
+  shared with start_databases).
+- `vec-conn-opts` now derives `:metric-type` (from `:db.vec/metric-type`,
+  stripped from schema like dimensions) — cosine/euclidean per attribute.
+- `vector_search_test.clj`: 9 tests — first-ever `:vec` runtime coverage
+  (backlog gap closed): schema strip, conn opts, nearest-first, `:top`,
+  `:attribute`, missing vector, real P3 processor round-trip, native-id.
+  Plain clojure vectors of doubles work as `:db.type/vec` values.
+- Suite: **79 tests / 323 assertions / 0 failures**, lint 0. README: Vector
+  Attributes section expanded with `:<entity>/similar` docs + hybrid note.
+- **1.0 feature set is COMPLETE** per human: dual-Pathom, read-your-writes,
+  full-text search, vector similarity search. Ready for `v1.0.0-RC1` tag
+  (human will tag; cut CHANGELOG section first).
+
+Before that:
+
 **FULL-TEXT SEARCH SHIPPED (all phases 0–3 complete).**
 - Phase 3 (final): test-app model declares `::dlo/fulltext?` on
   `:account/name` + `:person/bio` (native-id); `AccountSearchList` report

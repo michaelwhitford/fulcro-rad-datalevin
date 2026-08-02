@@ -425,6 +425,77 @@
                                   eids))]
                {search-key idents}))))})))
 
+(defn similar-resolver
+  "Generates a vector similarity (semantic) search resolver for an entity type,
+   or nil when the entity has no `:vec` attributes.
+
+   Output: `{:<ns>/similar [{id-attr ...} ...]}` — idents in SIMILARITY order
+   (ascending vector distance; nearest first). Fields are filled by the
+   existing batched id-resolver via a join query, e.g.
+   `[{(:account/similar {:vector [...]}) [:account/id :account/name]}]`.
+
+   Params — read from `(:query-params env)`, which both RAD parsers populate
+   from the EQL join params (`{:params {:vector ...}}` on a load):
+   - `:vector`    (required) — the query embedding (a sequence of numbers whose
+     dimension matches the attribute's `:db.vec/dimensions`).
+   - `:attribute` — optional qualified keyword of a specific `:vec` attribute
+     to search (e.g. `:account/embedding`). Defaults to all of the entity's
+     `:vec` attribute domains (they must share dimensions to be searched
+     together).
+   - `:top`       — cap on results (Datalevin default 10).
+   A missing `:vector` resolves to an empty list (no throw).
+
+   Similarity ordering is obtained via `{:display :refs+dists}` plus an
+   explicit ascending sort — Datalog's set semantics do NOT preserve the
+   engine's rank order (same finding as full-text; runtime-proven).
+
+   Native-id aware: for `::dlo/native-id?` entities the matched eid IS the id;
+   otherwise the identity attribute's value is pulled per matched eid.
+
+   Pairs with the full-text `:<ns>/search` resolver for hybrid keyword +
+   semantic search over the same entities."
+  [all-attributes {::attr/keys [qualified-key] :keys [::attr/schema] :as id-attribute}]
+  (let [entity-ns     (namespace qualified-key)
+        similar-key   (keyword entity-ns "similar")
+        is-native-id? (native-id? id-attribute)
+        vec-attrs     (filterv #(and (= schema (::attr/schema %))
+                                     (= entity-ns (namespace (::attr/qualified-key %)))
+                                     (= :vec (::attr/type %)))
+                               all-attributes)
+        domains       (mapv #(util/vec-attr-domain (::attr/qualified-key %)) vec-attrs)]
+    (when (seq vec-attrs)
+      (log/info "Building similar resolver for" qualified-key "->" similar-key
+                "domains" domains)
+      {:com.wsscode.pathom.connect/sym    (symbol (str entity-ns "-similar-resolver"))
+       :com.wsscode.pathom.connect/output [{similar-key [qualified-key]}]
+       :com.wsscode.pathom.connect/resolve
+       (fn [{::dlo/keys [databases] :as env} _input]
+         (let [{:keys [vector attribute top]} (:query-params env)]
+           (if (nil? vector)
+             {similar-key []}
+             (let [db     (db-value databases schema)
+                   opts   (cond-> {:display :refs+dists}
+                            top (assoc :top top))
+                   scored (if attribute
+                            (util/q '[:find ?e ?d
+                                      :in $ ?a ?q ?opts
+                                      :where [(vec-neighbors $ ?a ?q ?opts) [[?e _ _ ?d]]]]
+                                    db attribute vector opts)
+                            (util/q '[:find ?e ?d
+                                      :in $ ?q ?opts
+                                      :where [(vec-neighbors $ ?q ?opts) [[?e _ _ ?d]]]]
+                                    db vector (assoc opts :domains domains)))
+                   eids   (->> scored (sort-by second) (map first) distinct)
+                   idents (if is-native-id?
+                            (mapv (fn [eid] {qualified-key eid}) eids)
+                            (into []
+                                  (keep (fn [eid]
+                                          (when-some [id (get (util/pull db [qualified-key] eid)
+                                                              qualified-key)]
+                                            {qualified-key id})))
+                                  eids))]
+               {similar-key idents}))))})))
+
 (>defn generate-resolvers
   "Generate all of the resolvers that make sense for the given database config. This should be passed
   to your Pathom parser to register resolvers for each of your schemas.
@@ -439,12 +510,15 @@
      you build a Pathom 3 index yourself, use `generate-resolvers-pathom3` (or
      RAD's `convert-resolvers`) to get native Pathom 3 resolver records.
 
-   Generates three types of resolvers:
+   Generates four types of resolvers:
    1. ID resolvers: resolve entity data by ID (e.g., :account/id -> account data)
    2. All-IDs resolvers: resolve all entity IDs (e.g., :all-accounts -> [{:account/id ...} ...])
    3. Search resolvers (only for entity types with ::dlo/fulltext? attributes):
       parameterized full-text search returning relevance-ordered idents
-      (e.g., :account/search — see search-resolver)"
+      (e.g., :account/search — see search-resolver)
+   4. Similar resolvers (only for entity types with :vec attributes):
+      parameterized vector similarity search returning nearest-neighbor idents
+      (e.g., :account/similar — see similar-resolver)"
   [attributes schema]
   [::attr/attributes keyword? => sequential?]
   (let [attributes    (filter #(= schema (::attr/schema %)) attributes)
@@ -471,8 +545,10 @@
         ;; Generate all-IDs resolvers (all entities of a type)
         all-ids-resolvers (mapv (partial all-ids-resolver attributes) identity-attributes)
         ;; Generate search resolvers (entity types with ::dlo/fulltext? attrs)
-        search-resolvers  (into [] (keep (partial search-resolver attributes)) identity-attributes)]
-    (concat entity-resolvers all-ids-resolvers search-resolvers)))
+        search-resolvers  (into [] (keep (partial search-resolver attributes)) identity-attributes)
+        ;; Generate similar resolvers (entity types with :vec attrs)
+        similar-resolvers (into [] (keep (partial similar-resolver attributes)) identity-attributes)]
+    (concat entity-resolvers all-ids-resolvers search-resolvers similar-resolvers)))
 
 (defn generate-resolvers-pathom3
   "Like `generate-resolvers`, but returns native **Pathom 3** resolver records

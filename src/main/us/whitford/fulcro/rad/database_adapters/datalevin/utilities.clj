@@ -1,11 +1,19 @@
 (ns us.whitford.fulcro.rad.database-adapters.datalevin.utilities
   "Utility functions for Datalevin adapter - query helpers."
   (:require
+   [clojure.string :as str]
    [datalevin.core :as d]))
 
 ;; ================================================================================
 ;; Query Utilities (Convenience wrappers around Datalevin functions)
 ;; ================================================================================
+
+(defn vec-attr-domain
+  "Convert a qualified keyword to a Datalevin vector domain string.
+   Matches datalevin.vector/attr-domain: replaces '/' with '_' (each
+   :db.type/vec attribute is automatically its own vector search domain)."
+  [qualified-key]
+  (str/replace (str (namespace qualified-key) "/" (name qualified-key)) "/" "_"))
 
 (defn q
   "Execute a Datalog query against the database.
