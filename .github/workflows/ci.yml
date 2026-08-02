@@ -84,6 +84,14 @@ jobs:
           sudo /tmp/install-clj-kondo
           clj-kondo --version
 
+      - name: Prime dependency cache
+        # Download all deps BEFORE the classpath command substitution below.
+        # On a cold ~/.m2, `clojure -Spath` interleaves "Downloading:" progress
+        # with the classpath, corrupting the string passed to clj-kondo — it
+        # then lints nothing and copies no configs, so the real lint runs
+        # without imported library configs and reports spurious warnings.
+        run: clojure -P -A:test
+
       - name: Regenerate dependency lint configs
         # .clj-kondo/imports/ is gitignored (derived); regenerate third-party
         # configs/hooks from the classpath before linting source.
