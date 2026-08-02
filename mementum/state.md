@@ -15,6 +15,23 @@ Build/test: `clojure -M:run-tests` (kaocha). Focus one ns:
 
 ## Now
 
+**Test app modernized (proving ground ready for the full-text spike).**
+- `~/src/datalevin-test-app` deps bumped to the adapter-tested stack (fulcro
+  3.9.5, rad 1.6.24, guardrails 1.3.3, timbre 6.8.0, eql 2025.09.27, clojure
+  1.12.5 + safe minors). Held back: hiccup 2.0 (breaking) and the coupled
+  shadow-cljs 3.x / closure-compiler / cljs trio.
+- Ported the app to the current adapter contract: deleted its local
+  `datalevin-common` wrap-env shim (superseded by `dl/wrap-env`, atom-backed
+  RYW snapshots); tests that hand-register raw P3 indexes or poke resolver
+  records now use `dl/generate-resolvers-pathom3`; processor-based paths keep
+  `dl/generate-resolvers` (RAD `new-processor` auto-converts P2-shape maps).
+- App suite: was 82 tests / 19 errors / 9 failures (stale contract, NOT the
+  deps bump — verified by baseline run) → **82 tests / 337 assertions / 0
+  failures**. `app.server.parser` loads clean. Commits: test-app `230d047`
+  (deps) + `6a71711` (port).
+
+Before that:
+
 **CI + release automation (mirrors fulcro-rad-git).**
 - `.github/workflows/ci.yml` — push/PR to main: test job (temurin 21, official
   Clojure install script, deps cache, `clojure -M:run-tests`) + lint job
