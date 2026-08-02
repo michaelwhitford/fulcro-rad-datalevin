@@ -1,0 +1,82 @@
+name: Release
+
+# Deploys ONLY on release-candidate and full-release tags. Pre-release labels
+# such as -alpha / -beta intentionally do NOT trigger a deploy (those are for
+# local builds via `clojure -T:build jar|install`).
+#   full release:      git tag v1.2.3       && git push origin v1.2.3
+#   release candidate: git tag v1.0.0-RC1   && git push origin v1.0.0-RC1
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'           # full release,      e.g. v1.2.3
+      - 'v[0-9]+.[0-9]+.[0-9]+-RC[0-9]+'  # release candidate, e.g. v1.0.0-RC1
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # required to create the GitHub Release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0      # full history for release notes generation
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install Clojure CLI
+        run: |
+          curl -fsSL -o /tmp/linux-install.sh \
+            https://github.com/clojure/brew-install/releases/latest/download/linux-install.sh
+          chmod +x /tmp/linux-install.sh
+          sudo /tmp/linux-install.sh
+          clojure --version
+
+      - name: Cache Clojure dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            .cpcache
+          key: ${{ runner.os }}-deps-${{ hashFiles('deps.edn') }}
+          restore-keys: |
+            ${{ runner.os }}-deps-
+
+      - name: Derive version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Run tests
+        run: clojure -M:run-tests
+
+      - name: Build jar
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: clojure -T:build jar
+
+      - name: Deploy to Clojars
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          CLOJARS_USERNAME: ${{ secrets.CLOJARS_USERNAME }}
+          CLOJARS_PASSWORD: ${{ secrets.CLOJARS_PASSWORD }}
+        run: clojure -X:deploy
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Mark pre-releases (SemVer pre-release has a hyphen, e.g. v1.0.0-RC1)
+          prerelease=""
+          case "$GITHUB_REF_NAME" in
+            *-*) prerelease="--prerelease" ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" \
+            target/fulcro-rad-datalevin.jar \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            $prerelease

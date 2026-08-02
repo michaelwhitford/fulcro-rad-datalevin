@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### CI and release automation (GitHub Actions)
+- `.github/workflows/ci.yml` — on push/PR to `main`: runs the full kaocha
+  suite and a clj-kondo lint job (which regenerates third-party lint configs
+  from the classpath before linting, since `.clj-kondo/imports/` is derived
+  and gitignored).
+- `.github/workflows/release.yml` — pushing a `vX.Y.Z` (full release) or
+  `vX.Y.Z-RCn` (release candidate) tag runs the tests, builds the jar with
+  the version derived from the tag, deploys to Clojars
+  (`us.whitford/fulcro-rad-datalevin`), and creates a GitHub Release.
+  `-alpha`/`-beta` version suffixes are local-only and never deploy.
+
+### Changed
+
+#### Build migrated from depstar to tools.build
+- New `build.clj` (`clojure -T:build clean|jar|install`); version defaults to
+  `1.0.0-RC1` and can be overridden with the `VERSION` env var. The published
+  pom is built from the root `:deps` only (no test-only deps such as pathom).
+- `:jar`/`:install` depstar aliases removed; `:deploy` (deps-deploy) now reads
+  the pom from inside `target/classes/` and still runs in an isolated
+  classpath.
+
 #### Read-your-writes in the save/delete mutation (atom-backed db snapshot)
 - `::dlo/databases` is now `{schema -> atom<db>}` (was `{schema -> db}`).
   `wrap-env` / `pathom-plugin` seed the atoms per request; `save-form!` and

@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install Clojure CLI
+        # Official install script (a plain run step, so no Node.js-20 based
+        # third-party action / deprecation warning).
+        run: |
+          curl -fsSL -o /tmp/linux-install.sh \
+            https://github.com/clojure/brew-install/releases/latest/download/linux-install.sh
+          chmod +x /tmp/linux-install.sh
+          sudo /tmp/linux-install.sh
+          clojure --version
+
+      - name: Cache Clojure dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            .cpcache
+          key: ${{ runner.os }}-deps-${{ hashFiles('deps.edn') }}
+          restore-keys: |
+            ${{ runner.os }}-deps-
+
+      - name: Run tests
+        # Datalevin runs embedded (LMDB native libs resolve via maven on
+        # linux); :run-tests already carries --enable-native-access.
+        run: clojure -M:run-tests
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install Clojure CLI
+        run: |
+          curl -fsSL -o /tmp/linux-install.sh \
+            https://github.com/clojure/brew-install/releases/latest/download/linux-install.sh
+          chmod +x /tmp/linux-install.sh
+          sudo /tmp/linux-install.sh
+          clojure --version
+
+      - name: Cache Clojure dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            .cpcache
+          key: ${{ runner.os }}-deps-${{ hashFiles('deps.edn') }}
+          restore-keys: |
+            ${{ runner.os }}-deps-
+
+      - name: Install clj-kondo
+        run: |
+          curl -fsSL -o /tmp/install-clj-kondo \
+            https://raw.githubusercontent.com/clj-kondo/clj-kondo/master/script/install-clj-kondo
+          chmod +x /tmp/install-clj-kondo
+          sudo /tmp/install-clj-kondo
+          clj-kondo --version
+
+      - name: Regenerate dependency lint configs
+        # .clj-kondo/imports/ is gitignored (derived); regenerate third-party
+        # configs/hooks from the classpath before linting source.
+        run: |
+          clj-kondo --lint "$(clojure -Spath -A:test)" --dependencies --copy-configs
+
+      - name: Lint
+        run: clj-kondo --lint src/main src/test

@@ -15,6 +15,32 @@ Build/test: `clojure -M:run-tests` (kaocha). Focus one ns:
 
 ## Now
 
+**CI + release automation (mirrors fulcro-rad-git).**
+- `.github/workflows/ci.yml` — push/PR to main: test job (temurin 21, official
+  Clojure install script, deps cache, `clojure -M:run-tests`) + lint job
+  (regenerates kondo dep configs from `clojure -Spath -A:test` with
+  `--dependencies --copy-configs`, then lints `src/main src/test`). No git
+  identity or `--skip-meta` needed here (unlike fulcro-rad-git).
+- `.github/workflows/release.yml` — fires ONLY on `v1.2.3` and `v1.2.3-RC1`
+  tags (`-alpha`/`-beta` are local-only, by policy): tests → `clojure -T:build
+  jar` (VERSION from tag) → `clojure -X:deploy` to Clojars (needs
+  `CLOJARS_USERNAME`/`CLOJARS_PASSWORD` repo **secrets — must be set on GitHub
+  before first release**) → `gh release create` with jar (`--prerelease` for
+  hyphenated tags).
+- **Build migrated depstar → tools.build** (`build.clj`, ported from
+  fulcro-rad-git): `clojure -T:build clean|jar|install`; lib
+  `us.whitford/fulcro-rad-datalevin`, default version **1.0.0-RC1**, thin jar
+  `target/fulcro-rad-datalevin.jar`, pom from root `:deps` only (no test
+  deps). `:deploy` alias now reads the pom from inside `target/classes/`.
+  Old depstar `:jar`/`:install` aliases removed; `resources/.gitkeep` added
+  (dir was in `:paths` but absent). README build section updated.
+- Verified locally: jar pom coordinates correct; suite 57/284/0; lint 0
+  warnings via the exact CI lint flow.
+- NOTE: AGENTS.md `λ deps` still says "depstar + deps-deploy" — stale, needs
+  human-approved update to "tools.build (:build) + deps-deploy (:deploy)".
+
+Before that:
+
 **Real dual-Pathom integration tests + read-your-writes (v1.0-alpha prep).**
 - New `pathom_integration_test.clj` drives the adapter through **real** RAD
   parsers — `pathom/new-parser` (P2) and `pathom3/new-processor` (P3) — full CRUD
@@ -148,10 +174,10 @@ here in `state.md`; `CHANGELOG.md` records shipped changes.)
 
 ## Blocking / open
 
-- Branch is ~10+ commits **ahead of origin, unpushed**. Push when ready.
-- CI note: `.clj-kondo/imports/` is gitignored (derived); a CI lint job must
-  regenerate dep configs (`clj-kondo --lint "$(clojure -Spath)" --dependencies
-  --copy-configs`) before linting source.
+- Branch is ahead of origin, **unpushed**. Push when ready (first push will
+  exercise ci.yml).
+- `CLOJARS_USERNAME` / `CLOJARS_PASSWORD` secrets must be added to the GitHub
+  repo before pushing a release tag.
 
 ## Key files
 

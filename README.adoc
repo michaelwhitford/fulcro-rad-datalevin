@@ -638,12 +638,22 @@ clojure -M:outdated
 
 === Building / Installing / Deploying
 
+Builds use https://github.com/clojure/tools.build[tools.build] (see `build.clj`).
+The version defaults to the value in `build.clj`; set the `VERSION` env var to
+override (CI derives it from the pushed git tag).
+
 [source,bash]
 ----
-clojure -X:jar
-clojure -X:install
-clojure -X:deploy
+clojure -T:build jar       # write pom + build thin jar into target/
+clojure -T:build install   # install to local ~/.m2
+clojure -X:deploy          # deploy target/ jar to Clojars (separate step;
+                           # needs CLOJARS_USERNAME + CLOJARS_PASSWORD)
 ----
+
+Releases are automated: pushing a `v1.2.3` (full release) or `v1.2.3-RC1`
+(release candidate) tag triggers the GitHub Actions release workflow, which
+runs the tests, deploys to Clojars, and creates a GitHub Release. `-alpha` /
+`-beta` version suffixes are for local builds only and never trigger a deploy.
 
 == Troubleshooting
 

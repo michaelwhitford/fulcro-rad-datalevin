@@ -26,19 +26,19 @@
                        :jvm-opts ["--enable-native-access=ALL-UNNAMED"]
                        :main-opts ["-m" "kaocha.runner"]}
 
-           :jar     {:replace-deps {com.github.seancorfield/depstar {:mvn/version "2.1.303"}}
-                     :exec-fn      hf.depstar/jar
-                     :exec-args    {:jar      "target/fulcro-rad-datalevin.jar"
-                                    :sync-pom true}}
+           ;; Build via tools.build — see build.clj.  clojure -T:build jar | install
+           :build   {:deps       {io.github.clojure/tools.build {:mvn/version "0.10.14"}}
+                     :ns-default build}
 
-           :install {:replace-deps {slipset/deps-deploy {:mvn/version "0.2.5"}}
-                     :exec-fn      deps-deploy.deps-deploy/deploy
-                     :exec-args    {:installer :local
-                                    :artifact  "target/fulcro-rad-datalevin.jar"}}
-
+           ;; Deploy to Clojars in an ISOLATED classpath (deps-deploy pulls legacy
+           ;; maven/s3 libs that conflict with tools.build's maven-resolver, so it
+           ;; must run in its own process). Reads coordinates from the pom inside
+           ;; the jar. Needs CLOJARS_USERNAME + CLOJARS_PASSWORD (deploy token).
+           ;;   clojure -T:build jar && clojure -X:deploy
            :deploy  {:replace-deps {slipset/deps-deploy {:mvn/version "0.2.5"}}
                      :exec-fn      deps-deploy.deps-deploy/deploy
                      :exec-args    {:installer :remote
-                                    :artifact  "target/fulcro-rad-datalevin.jar"}}
+                                    :artifact  "target/fulcro-rad-datalevin.jar"
+                                    :pom-file  "target/classes/META-INF/maven/us.whitford/fulcro-rad-datalevin/pom.xml"}}
            :outdated {:deps {com.github.liquidz/antq {:mvn/version "RELEASE"}}
                       :main-opts ["-m" "antq.core"]}}}
