@@ -11,8 +11,10 @@ related:
 
 # Design: Full-Text Search for fulcro-rad-datalevin
 
-> Status: **PROPOSED — not yet implemented.** Design frozen for pickup in a new
-> session. Nothing in this document has been coded yet.
+> Status: **PHASE 0 SPIKE COMPLETE** (datalevin-test-app
+> `src/test/app/fulltext_spike_test.clj`, commit 9e4adb0). RISK #1 resolved;
+> one design correction found (relevance order — see §6). Phases 1–3 not yet
+> implemented.
 
 ## Memory anchors (6 interrogatives)
 
@@ -39,7 +41,8 @@ related:
                           "RAD load with {:params {:query ...}} reaches the resolver"]
   :how/fail-modes        ["phrase search without :index-position? → error"
                           "params not forwarded by RAD report → resolver gets no query"
-                          "silently defaulting domain to \"datalevin\" instead of per-entity"]}}
+                          "silently defaulting domain to \"datalevin\" instead of per-entity"
+                          "assuming :find [?e ...] preserves rank order — it does NOT (spike-proven); use :refs+scores + sort"]}}
 ```
 
 ---
@@ -162,10 +165,13 @@ type that has searchable attributes — a resolver parallel to `all-ids-resolver
                  top    (assoc :top top)
                  limit  (assoc :limit limit)
                  offset (assoc :offset offset))
-          eids (d/q '[:find [?e ...]
-                      :in $ ?q ?opts
-                      :where [(fulltext $ ?q ?opts) [[?e _ _]]]]
-                    db query opts)]
+          ;; SPIKE-PROVEN: must use :refs+scores + explicit sort — Datalog's
+          ;; set semantics do NOT preserve the engine's rank order (see §6).
+          scored (d/q '[:find ?e ?s
+                        :in $ ?q ?opts
+                        :where [(fulltext $ ?q ?opts) [[?e _ _ ?s]]]]
+                      db query (assoc opts :display :refs+scores))
+          eids   (->> scored (sort-by second >) (map first) distinct)]
       {search-key (mapv (fn [eid] {id-key (eid->id db eid)}) eids)}))
   ```
   Map `?e` → identity ident, **native-id aware** (reuse the native-id logic from
@@ -200,7 +206,22 @@ Open (need a call):
 
 ## 6. Risks / unknowns (do these first)
 
-**RISK #1 — Pathom param plumbing (the riskiest unknown).** Must verify exactly
+**RISK #1 — RESOLVED by Phase 0 spike** (datalevin-test-app
+`src/test/app/fulltext_spike_test.clj`, runtime-proven 2026-08-02):
+- `{:params {:query …}}` on an EQL join **arrives as `(:query-params env)`**
+  through RAD's real Pathom 3 `new-processor`, including for a resolver written
+  as a Pathom-2-shape map (the exact shape `generate-resolvers` emits).
+- Low-level `d/fulltext` round-trip works with sync indexing; `:top` limits.
+- **NEW FINDING (design correction):** `:find [?e ...]` does **NOT** preserve
+  the engine's relevance order (Datalog set semantics) — observed find order
+  `["one" "two"]` vs score order `["two" "one"]`. The generated resolver MUST
+  query `{:display :refs+scores}` and sort by score descending itself (§4
+  sketch updated).
+- Test-authoring gotcha: kaocha failure diffs realize lazy seqs after
+  `with-test-db` closes the LMDB env (`:lmdb/closed` reporter crash) — use
+  eager `mapv` in assertions over db-backed data.
+
+Original risk statement (for history): Must verify exactly
 how a RAD report/`df/load!` forwards `{:params {:query …}}` into a Pathom3
 resolver, and how the resolver reads them (likely `com.wsscode.pathom3.connect.operation/params`
 or the EQL AST params). **Prove this end-to-end BEFORE building the generator.**

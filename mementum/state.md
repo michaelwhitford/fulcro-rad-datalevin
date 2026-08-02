@@ -15,6 +15,20 @@ Build/test: `clojure -M:run-tests` (kaocha). Focus one ns:
 
 ## Now
 
+**Full-text Phase 0 spike COMPLETE** (test-app commit `9e4adb0`,
+`src/test/app/fulltext_spike_test.clj`; suite 86/344/0):
+- RISK #1 resolved: `{:params {:query …}}` → `(:query-params env)` through
+  RAD's real P3 processor, proven with a P2-shape echo resolver (the exact
+  generator shape). `d/fulltext` round-trip + `:top` also proven.
+- **Design correction found**: `:find [?e ...]` does NOT preserve relevance
+  order (Datalog set semantics) — resolver must use `{:display :refs+scores}`
+  + explicit score sort. Design doc §4/§6 updated.
+- Next: **Phase 1** (schema + connection: `::dlo/fulltext?`, `attr->schema`
+  fulltext branch, `search-conn-opts` deriver) then **Phase 2** (resolver
+  generator). See [knowledge/design/full-text-search.md](knowledge/design/full-text-search.md).
+
+Before that:
+
 **Test app modernized (proving ground ready for the full-text spike).**
 - `~/src/datalevin-test-app` deps bumped to the adapter-tested stack (fulcro
   3.9.5, rad 1.6.24, guardrails 1.3.3, timbre 6.8.0, eql 2025.09.27, clojure
