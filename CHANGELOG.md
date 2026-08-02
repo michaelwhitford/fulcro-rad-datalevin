@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-RC1] - 2026-08-02
+
+Release candidate for 1.0.0. Highlights: Datalevin 1.0.0, Pathom-version
+agnosticism (2 and 3, no hard pathom dependency), read-your-writes saves,
+full-text search, and vector similarity search (hybrid keyword + semantic
+search ready).
+
 ### Added
 
 #### Vector similarity search (`:<entity>/similar` resolvers)
