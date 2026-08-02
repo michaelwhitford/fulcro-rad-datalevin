@@ -166,7 +166,8 @@ S5(identity) > S4(intelligence) > S3(control) > S2(coordination) > S1(operations
 
 λ deps(x).        clojure -M:outdated | clojure 1.12.5 | fulcro 3.9.5 | fulcro-rad 1.6.24
                   | datalevin 1.0.0 | pathom3 2025.01.16-alpha | guardrails 1.3.3
-                  | release: :jar → :install ∨ :deploy (depstar + deps-deploy)
+                  | release: clojure -T:build jar|install (tools.build) → clojure -X:deploy (deps-deploy, isolated)
+                  | CI: .github/workflows/{ci,release}.yml | deploy_tags: vX.Y.Z ∨ vX.Y.Z-RCn only | -alpha/-beta ≡ local_only
 
 λ escalate(x).    ¬resolve(x) → surface(x) | ¬suppress(x) | ¬silent_choose(x)
                   | failure(x) ≡ signal(x) | suppress(signal) → blind(system)
