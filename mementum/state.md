@@ -36,6 +36,17 @@ Build/test: `clojure -M:run-tests` (kaocha). Focus one ns:
   (dir was in `:paths` but absent). README build section updated.
 - Verified locally: jar pom coordinates correct; suite 57/284/0; lint 0
   warnings via the exact CI lint flow.
+- **First CI runs failed; two layered causes, both fixed:**
+  1. Cold `~/.m2` → `$(clojure -Spath -A:test)` interleaved `Downloading:`
+     output into the classpath → clj-kondo copied no configs. Fix: `clojure
+     -P -A:test` prime step before the substitution.
+  2. **`~/.config/clj-kondo/config.edn` on the dev machine globally disables
+     `:unused-referred-var`/`:unused-binding`/`:unused-namespace`/`:unused-private-var`**
+     — local "0 warnings" was masked; CI surfaced 14 real findings. Fixed the
+     code (removed dead requires/bindings) + one narrow tracked-config exclude
+     for a true FP (guardrails gspec `=>`/`?` not registered as usage by its
+     hook). To reproduce CI lint locally: `XDG_CONFIG_HOME=/tmp/empty-xdg
+     clj-kondo --lint src/main src/test`.
 - NOTE: AGENTS.md `λ deps` still says "depstar + deps-deploy" — stale, needs
   human-approved update to "tools.build (:build) + deps-deploy (:deploy)".
 

@@ -1,7 +1,6 @@
 (ns us.whitford.fulcro.rad.database-adapters.datalevin.start-databases
   "Database lifecycle management for Datalevin adapter."
   (:require
-   [clojure.spec.alpha :as s]
    [clojure.string :as str]
    [com.fulcrologic.guardrails.core :refer [>defn =>]]
    [com.fulcrologic.rad.attributes :as attr]
@@ -46,8 +45,7 @@
   "Convert a single RAD attribute to Datalevin schema entry.
    Returns a map entry [attr-key schema-map], or nil for native-id attributes."
   [{::attr/keys [type qualified-key cardinality identity?]
-    ::dlo/keys  [attribute-schema native-id?]
-    :as         attribute}]
+    ::dlo/keys  [attribute-schema native-id?]}]
   ;; Skip native-id attributes - they use :db/id which is built-in
   (when (and type (not native-id?))
     (let [datalevin-type (get type-map type)
@@ -110,7 +108,7 @@
    Returns: sequence of maps with :db/ident for each enum value"
   [attributes]
   (mapcat
-   (fn [{::attr/keys [qualified-key type enumerated-values] :as a}]
+   (fn [{::attr/keys [qualified-key type enumerated-values]}]
      (when (= :enum type)
        (let [enum-nspc (str (namespace qualified-key) "." (name qualified-key))]
          (keep (fn [v]
@@ -335,7 +333,7 @@
    values are the live database connections."
   ([config]
    (start-databases config {}))
-  ([config {:keys [attributes] :as options}]
+  ([config {:keys [attributes]}]
    (let [db-configs (or (dlo/databases config)
                         (::dlo/databases config)
                         {})]

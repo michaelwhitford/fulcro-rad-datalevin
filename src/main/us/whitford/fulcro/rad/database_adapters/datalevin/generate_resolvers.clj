@@ -7,7 +7,6 @@
    [com.fulcrologic.guardrails.core :refer [>defn => ?]]
    [com.fulcrologic.rad.attributes :as attr]
    [com.fulcrologic.rad.authorization :as auth]
-   [datalevin.core :as d]
    [edn-query-language.core :as eql]
    [taoensso.encore :as enc]
    [taoensso.timbre :as log]
@@ -315,7 +314,7 @@
     {:com.wsscode.pathom.connect/sym    (symbol (str entity-ns "-all-resolver"))
      :com.wsscode.pathom.connect/output [{all-ids-key [qualified-key]}]
      :com.wsscode.pathom.connect/resolve
-     (fn [{::dlo/keys [databases] :as env} _input]
+     (fn [{::dlo/keys [databases]} _input]
        (let [db (db-value databases schema)]
          (if is-native-id?
            ;; For native IDs, find entities by querying for a non-identity attribute

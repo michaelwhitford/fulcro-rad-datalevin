@@ -151,7 +151,7 @@
                       :else
                       {:db/id entity-id})
         {updates false retractions true}
-        (group-by (fn [[attr {:keys [before after]}]]
+        (group-by (fn [[_attr {:keys [before after]}]]
                     (and (some? before) (nil? after)))
                   delta)
         entity-map (reduce-kv
@@ -189,7 +189,7 @@
   [env delta]
   [map? map? => vector?]
   (reduce-kv
-   (fn [txns [key-attr id :as ident] entity-delta]
+   (fn [txns [key-attr id] entity-delta]
      (let [txn-ops (delta-entry->txn env key-attr id entity-delta)]
        (into txns txn-ops)))
    []
