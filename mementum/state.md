@@ -15,6 +15,25 @@ Build/test: `clojure -M:run-tests` (kaocha). Focus one ns:
 
 ## Now
 
+**Full-text Phase 1 COMPLETE (schema + connection).**
+- `::dlo/fulltext?` option (bool ∨ opts-map) in `datalevin_options.cljc`.
+- `attr->schema`: emits `:db/fulltext true` + derived `:db.fulltext/domains
+  [<attr-namespace>]` (one domain per entity type); user-supplied native
+  domains/autoDomain suppress derivation.
+- `search-conn-opts` (public, `start_databases.clj`, mirrors `vec-conn-opts`):
+  only emits domains that have actual opts (e.g. `:index-position?`);
+  `merge-conn-opts` generalized to deep-merge both `:vector-domains` and
+  `:search-domains`; `start-database!` merges both derivers.
+- `search_test.clj`: 6 tests — schema gen, user-domain respect, conn-opts
+  derivation, e2e ranked search (refs+scores + sort, per spike finding),
+  e2e **phrase search** (proves `:index-position?` flows attr → conn), sync
+  index save→search. Suite: **63 tests / 298 assertions / 0 failures**, lint 0.
+- Next: **Phase 2** — `search-resolver` in `generate_resolvers.clj` (mirror
+  `all-ids-resolver`; params via `(:query-params env)`; `:refs+scores` +
+  explicit sort; native-id aware). Then Phase 3 (RAD report integration).
+
+Before that:
+
 **Full-text Phase 0 spike COMPLETE** (test-app commit `9e4adb0`,
 `src/test/app/fulltext_spike_test.clj`; suite 86/344/0):
 - RISK #1 resolved: `{:params {:query …}}` → `(:query-params env)` through

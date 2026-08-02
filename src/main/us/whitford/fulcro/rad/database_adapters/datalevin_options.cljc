@@ -67,6 +67,36 @@
    ```"
   ::native-id?)
 
+(def fulltext?
+  "Truthy. Marks the attribute as full-text searchable via Datalevin's built-in
+   search engine. Value is either `true` or a map of search-domain options
+   (e.g. `{:index-position? true}`, required for phrase/proximity search).
+
+   When truthy:
+   - Schema generation emits `:db/fulltext true` for the attribute.
+   - Unless the attribute's `::dlo/attribute-schema` already specifies
+     `:db.fulltext/domains` or `:db.fulltext/autoDomain`, the adapter derives
+     `:db.fulltext/domains [<entity-domain>]`, where `<entity-domain>` is the
+     attribute's namespace (e.g. `\"account\"`). All searchable attributes of
+     one entity type therefore share a single search domain.
+   - When the value is a map, those options are collected per domain into the
+     `:search-domains` connection option by `search-conn-opts` and passed to
+     `d/get-conn` by `start-database!`.
+
+   Indexing is synchronous by default (read-your-writes).
+
+   Example:
+   ```clojure
+   (defattr name :account/name :string
+     {::attr/identities #{:account/id}
+      ::dlo/fulltext?   true})
+
+   (defattr bio :account/bio :string
+     {::attr/identities #{:account/id}
+      ::dlo/fulltext?   {:index-position? true}})  ; enables phrase search
+   ```"
+  ::fulltext?)
+
 (def generate-resolvers?
   "Boolean. If false, automatic resolvers will not be generated for this attribute.
    Defaults to true."

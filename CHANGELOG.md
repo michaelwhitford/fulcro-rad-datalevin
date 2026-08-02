@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Full-text search foundation (`::dlo/fulltext?`) — Phase 1
+- New attribute option `::dlo/fulltext?` (value `true` or a search-domain
+  options map such as `{:index-position? true}` for phrase/proximity search).
+- Schema generation emits `:db/fulltext true` plus a derived
+  `:db.fulltext/domains [<entity-domain>]` — one shared domain per entity
+  type, named after the attribute namespace. User-supplied native
+  `:db.fulltext/domains` / `:db.fulltext/autoDomain` (via
+  `::dlo/attribute-schema`) are respected and suppress derivation.
+- New `search-conn-opts` derives `{:search-domains {...}}` from map-valued
+  `::dlo/fulltext?` declarations; `start-database!` merges it (alongside
+  `vec-conn-opts`) into the `d/get-conn` options. `merge-conn-opts` now
+  deep-merges `:search-domains` like `:vector-domains`.
+- Indexing is synchronous (read-your-writes). The generated
+  `:<entity>/search` resolver is Phase 2 (see
+  `mementum/knowledge/design/full-text-search.md`).
+
 #### CI and release automation (GitHub Actions)
 - `.github/workflows/ci.yml` — on push/PR to `main`: runs the full kaocha
   suite and a clj-kondo lint job (which regenerates third-party lint configs

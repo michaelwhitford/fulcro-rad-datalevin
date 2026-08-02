@@ -41,11 +41,18 @@
   [qualified-key]
   (str/replace (str (namespace qualified-key) "/" (name qualified-key)) "/" "_"))
 
+(defn- search-attr-domain
+  "Derive the search domain for a full-text attribute: the attribute's
+   namespace (the entity domain, e.g. \"account\"). All searchable attributes
+   of one entity type share a single domain so they are searched together."
+  [qualified-key]
+  (namespace qualified-key))
+
 (defn- attr->schema
   "Convert a single RAD attribute to Datalevin schema entry.
    Returns a map entry [attr-key schema-map], or nil for native-id attributes."
   [{::attr/keys [type qualified-key cardinality identity?]
-    ::dlo/keys  [attribute-schema native-id?]}]
+    ::dlo/keys  [attribute-schema native-id? fulltext?]}]
   ;; Skip native-id attributes - they use :db/id which is built-in
   (when (and type (not native-id?))
     (let [datalevin-type (get type-map type)
@@ -60,7 +67,18 @@
                            (assoc :db/unique :db.unique/identity)
 
                            (= :ref type)
-                           (assoc :db/valueType :db.type/ref))
+                           (assoc :db/valueType :db.type/ref)
+
+                           fulltext?
+                           (assoc :db/fulltext true)
+
+                           ;; Derive one search domain per entity type unless
+                           ;; the user specified domains (or autoDomain) via
+                           ;; the native keys in ::dlo/attribute-schema.
+                           (and fulltext?
+                                (not (contains? attribute-schema :db.fulltext/domains))
+                                (not (contains? attribute-schema :db.fulltext/autoDomain)))
+                           (assoc :db.fulltext/domains [(search-attr-domain qualified-key)]))
           ;; For :vec attributes, strip :db.vec/dimensions — it's not a valid
           ;; Datalevin schema key. Dimensions are passed separately as vector-domains
           ;; connection opts. See vec-conn-opts.
@@ -91,6 +109,44 @@
                    {} relevant)]
     (when (seq domains)
       {:vector-domains domains})))
+
+(defn search-conn-opts
+  "Extract search domain options from full-text RAD attributes (::dlo/fulltext?)
+   for passing to d/get-conn. Returns {:search-domains {\"domain\" {...}}} or nil.
+
+   Only domains that have actual options (e.g. an attribute declared
+   `::dlo/fulltext? {:index-position? true}`) are emitted — Datalevin creates
+   default-configured domains from the schema on its own. When several
+   attributes share a domain their option maps are merged in attribute order.
+
+   Domain naming mirrors the schema derivation in attr->schema: the attribute's
+   namespace, unless ::dlo/attribute-schema specifies :db.fulltext/domains
+   (those domains are used) or :db.fulltext/autoDomain (domain is the qualified
+   key without the leading colon)."
+  [schema-name attributes]
+  (let [relevant (filter #(and (= schema-name (::attr/schema %))
+                               (get % ::dlo/fulltext?))
+                   attributes)
+        domains  (reduce
+                   (fn [acc attr]
+                     (let [ft   (get attr ::dlo/fulltext?)
+                           opts (if (map? ft) ft {})
+                           asch (get attr ::dlo/attribute-schema)
+                           qk   (::attr/qualified-key attr)
+                           doms (cond
+                                  (:db.fulltext/autoDomain asch)
+                                  [(subs (str qk) 1)]
+
+                                  (seq (:db.fulltext/domains asch))
+                                  (:db.fulltext/domains asch)
+
+                                  :else
+                                  [(search-attr-domain qk)])]
+                       (reduce (fn [acc' d] (update acc' d merge opts)) acc doms)))
+                   {} relevant)
+        domains  (into {} (filter (fn [[_ opts]] (seq opts)) domains))]
+    (when (seq domains)
+      {:search-domains domains})))
 
 (defn- enumerated-values
   "Generate schema entries for enumerated values.
@@ -231,16 +287,20 @@
 ;; ================================================================================
 
 (defn- merge-conn-opts
-  "Merge user-supplied connection opts with the adapter-derived vector-domain
-   opts. User opts take precedence for every key except :vector-domains, where
-   the two maps are merged (derived per-domain dimensions combine with any
-   user-supplied per-domain overrides)."
-  [user-opts vec-opts]
-  (let [merged (merge user-opts vec-opts)]
-    (if (and (:vector-domains user-opts) (:vector-domains vec-opts))
-      (assoc merged :vector-domains (merge (:vector-domains user-opts)
-                                           (:vector-domains vec-opts)))
-      merged)))
+  "Merge user-supplied connection opts with the adapter-derived opts
+   (:vector-domains from vec attributes, :search-domains from fulltext
+   attributes). For those two keys the per-domain maps are merged (user-supplied
+   per-domain entries combine with derived ones, derived values winning per
+   domain since they come from attribute declarations); all other keys follow
+   plain merge semantics with derived opts on top."
+  [user-opts derived-opts]
+  (let [merged (merge user-opts derived-opts)]
+    (reduce (fn [m k]
+              (if (and (get user-opts k) (get derived-opts k))
+                (assoc m k (merge (get user-opts k) (get derived-opts k)))
+                m))
+            merged
+            [:vector-domains :search-domains])))
 
 (defn start-database!
   "Start a Datalevin database connection.
@@ -264,14 +324,19 @@
 
    For :vec attributes with :db.vec/dimensions in their dlo/attribute-schema,
    the vector domain options (including :dimensions) are passed to d/get-conn
-   as :vector-domains connection opts so Datalevin can initialize the HNSW index."
+   as :vector-domains connection opts so Datalevin can initialize the HNSW index.
+
+   For full-text attributes (::dlo/fulltext?) declared with an options map
+   (e.g. {:index-position? true}), the per-domain options are passed to
+   d/get-conn as :search-domains connection opts. See search-conn-opts."
   [{:keys [path schema attributes auto-schema? conn-opts]
     :or   {auto-schema? true}}]
   (let [datalevin-schema (when auto-schema?
                            (automatic-schema schema attributes))
-        vec-opts         (when auto-schema?
-                           (vec-conn-opts schema attributes))
-        merged-opts      (merge-conn-opts conn-opts vec-opts)
+        derived-opts     (when auto-schema?
+                           (merge (vec-conn-opts schema attributes)
+                                  (search-conn-opts schema attributes)))
+        merged-opts      (merge-conn-opts conn-opts derived-opts)
         conn             (cond
                            (and (seq datalevin-schema) (seq merged-opts))
                            (d/get-conn path datalevin-schema merged-opts)
