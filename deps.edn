@@ -7,7 +7,7 @@
            datalevin/datalevin        {:mvn/version "1.0.0"}
            edn-query-language/eql     {:mvn/version "2025.09.27"}
            com.taoensso/timbre        {:mvn/version "6.8.0"}
-           com.taoensso/encore        {:mvn/version "3.169.1"}}
+           com.taoensso/encore        {:mvn/version "3.171.1"}}
 
  ;; Pathom is intentionally NOT a hard dependency of this library. The adapter
  ;; emits Pathom-2-shape resolver maps (plain data, no pathom required to build),
@@ -40,5 +40,9 @@
                      :exec-args    {:installer :remote
                                     :artifact  "target/fulcro-rad-datalevin.jar"
                                     :pom-file  "target/classes/META-INF/maven/us.whitford/fulcro-rad-datalevin/pom.xml"}}
-           :outdated {:deps {com.github.liquidz/antq {:mvn/version "RELEASE"}}
+           ;; NOTE: antq exits 1 when outdated deps EXIST (by design, for CI
+           ;; gating) — a non-zero exit with a results table is success.
+           :outdated {:deps {com.github.liquidz/antq {:mvn/version "RELEASE"}
+                             ;; silence "SLF4J: Failed to load class ..." noise
+                             org.slf4j/slf4j-nop     {:mvn/version "2.0.18"}}
                       :main-opts ["-m" "antq.core"]}}}

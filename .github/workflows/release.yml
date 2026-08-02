@@ -18,7 +18,7 @@ jobs:
       contents: write        # required to create the GitHub Release
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0      # full history for release notes generation
 
@@ -37,7 +37,7 @@ jobs:
           clojure --version
 
       - name: Cache Clojure dependencies
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.m2/repository
