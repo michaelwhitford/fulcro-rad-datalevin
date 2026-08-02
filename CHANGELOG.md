@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Full-text search documentation and report integration — Phase 3
+- README gains a "Full-Text Search" section: `::dlo/fulltext?` declaration,
+  generated-resolver EQL, parameter reference (`:query`/`:top`/`:limit`/`:offset`),
+  phrase search + `:index-position?`, and a RAD report wiring example
+  (`ro/source-attribute :account/search` + a `:query` control).
+- Verified end-to-end in the proving-ground app (datalevin-test-app):
+  report-shaped EQL through a real RAD Pathom 3 parser returns
+  relevance-ordered rows with auto-filled columns; pagination params;
+  native-id entity search; a working `AccountSearchList` report component.
+
 #### Generated `:<entity>/search` resolvers — Phase 2
 - `generate-resolvers` now emits a third resolver type: for every entity type
   with at least one `::dlo/fulltext?` attribute, a parameterized full-text

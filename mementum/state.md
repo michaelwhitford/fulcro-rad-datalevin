@@ -15,6 +15,22 @@ Build/test: `clojure -M:run-tests` (kaocha). Focus one ns:
 
 ## Now
 
+**FULL-TEXT SEARCH SHIPPED (all phases 0–3 complete).**
+- Phase 3 (final): test-app model declares `::dlo/fulltext?` on
+  `:account/name` + `:person/bio` (native-id); `AccountSearchList` report
+  (cljc — JVM-verified) with `:query` control; new
+  `fulltext_search_integration_test.clj` proves report-shaped EQL through the
+  app's REAL P3 parser (relevance order, auto-filled columns, `:top`
+  pagination, empty query, native-id eids). App suite **91/356/0**
+  (test-app commit `d5b5677`). Adapter README gains a "Full-Text Search"
+  section; design doc status → all phases complete.
+- Remaining future enhancements (design §5): surface relevance scores,
+  cross-entity/global search, RAD report paging-control mapping.
+- Test-app commits remain **local-only** (not pushed): deps bump, contract
+  port, spike, Phase 3.
+
+Before that:
+
 **Full-text Phase 2 COMPLETE (generated search resolvers).**
 - `search-resolver` in `generate_resolvers.clj` (mirrors `all-ids-resolver`):
   emitted per entity type with ≥1 `::dlo/fulltext?` attr; output

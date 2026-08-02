@@ -11,11 +11,15 @@ related:
 
 # Design: Full-Text Search for fulcro-rad-datalevin
 
-> Status: **PHASES 0–2 COMPLETE.** Phase 0 spike: datalevin-test-app
-> `fulltext_spike_test.clj` (9e4adb0). Phase 1 (schema + conn): `::dlo/fulltext?`
-> + `search-conn-opts`. Phase 2 (resolver): `search-resolver` in
-> `generate_resolvers.clj`, tests in `search_test.clj`. Remaining: Phase 3
-> (RAD report integration + pagination + docs).
+> Status: **ALL PHASES (0–3) COMPLETE — feature shipped.**
+> Phase 0 spike: datalevin-test-app `fulltext_spike_test.clj` (9e4adb0).
+> Phase 1 (schema + conn): `::dlo/fulltext?` + `search-conn-opts`.
+> Phase 2 (resolver): `search-resolver` in `generate_resolvers.clj` +
+> `search_test.clj`. Phase 3 (report integration + docs): test-app
+> `AccountSearchList` report + `fulltext_search_integration_test.clj`
+> (report-shaped EQL through the real parser, pagination, native-id) +
+> README "Full-Text Search" section. Open §5 decisions (scores surface,
+> cross-entity search) remain future enhancements.
 
 ## Memory anchors (6 interrogatives)
 

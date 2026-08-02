@@ -7,7 +7,8 @@ A database adapter plugin for https://fulcro.fulcrologic.com/[Fulcro RAD] that p
 * Automatic schema generation from RAD attributes
 * Save and delete middleware for RAD forms
 * Works with *both Pathom 2 and Pathom 3* — the adapter has no hard dependency on either; you bring your own
-* Automatic resolver generation (id-resolvers and all-ids resolvers)
+* Automatic resolver generation (id-resolvers, all-ids resolvers, and full-text search resolvers)
+* Full-text search: declare `::dlo/fulltext?` on an attribute and get schema, search-domain config, and a relevance-ordered `:<entity>/search` resolver automatically
 * Read-your-writes: a form save's mutation returns the just-saved entity within the same request
 * Support for all RAD attribute types, including `:enum` and `:vec` (vector / HNSW index)
 * Native `:db/id` identity support (`::dlo/native-id?`)
@@ -496,6 +497,85 @@ HNSW vector index. The index configuration (notably `:dimensions`) lives on the
 `:vector-domains` to `d/get-conn`. Put `:db.vec/dimensions` in the attribute's
 `::dlo/attribute-schema` and the adapter strips it from the schema and moves it
 to the connection options.
+
+=== Full-Text Search (`::dlo/fulltext?`)
+
+Mark any attribute searchable and the adapter wires the whole feature — schema,
+connection configuration, and a generated, parameterized search resolver:
+
+[source,clojure]
+----
+(defattr name :account/name :string
+  {ao/identities   #{:account/id}
+   ::dlo/fulltext? true})
+
+;; Phrase/proximity search needs positional indexing (opt-in — costs storage):
+(defattr bio :account/bio :string
+  {ao/identities   #{:account/id}
+   ::dlo/fulltext? {:index-position? true}})
+----
+
+This produces:
+
+* *Schema* — `:db/fulltext true` plus a derived `:db.fulltext/domains
+  ["account"]`: one shared search domain per entity type (named after the
+  attribute namespace), so all searchable attributes of an entity are searched
+  together. Hand-written `:db.fulltext/domains` / `:db.fulltext/autoDomain` in
+  `::dlo/attribute-schema` are respected and suppress derivation.
+* *Connection* — map-valued options (like `:index-position?`) flow into the
+  `:search-domains` option passed to `d/get-conn` by `start-database!`.
+* *Resolver* — `generate-resolvers` emits an `:account/search` resolver
+  returning idents in *relevance order* (descending score); columns are filled
+  by the existing batched id-resolver:
+
+[source,clojure]
+----
+;; EQL (what a load/report sends):
+[{(:account/search {:query "fox" :top 20}) [:account/id :account/name]}]
+;; => {:account/search [{:account/id #uuid "..." :account/name "Fox Fox LLP"} ...]}
+----
+
+Parameters (read from `(:query-params env)`, which both RAD parsers populate
+from the load's `{:params ...}`):
+
+[cols="1,3"]
+|===
+| Param | Meaning
+
+| `:query`
+| Required. A string, a boolean expression vector such as
+  `[:and "red" [:not "dog"]]`, or `{:phrase "quick red fox"}` (phrase search
+  requires `{:index-position? true}` on the attribute). Missing/blank resolves
+  to an empty list.
+
+| `:top`
+| Cap on engine results (Datalevin default 10).
+
+| `:limit` / `:offset`
+| Pagination within the result window.
+|===
+
+Wiring a RAD report is just a source attribute and a control — the control's
+value travels as the `:query` param:
+
+[source,clojure]
+----
+(report/defsc-report AccountSearchList [this props]
+  {ro/source-attribute :account/search
+   ro/row-pk           account/id
+   ro/columns          [account/name account/email]
+   ro/run-on-mount?    false
+   ro/controls         {:query {:type     :string
+                                :label    "Search"
+                                :onChange (fn [this _] (control/run! this))}}})
+----
+
+Notes:
+
+* Indexing is synchronous — saved entities are immediately searchable
+  (read-your-writes).
+* Native-id entities are supported: the matched entity id is returned directly.
+* Datalevin stores only references to the source text (no double storage).
 
 == Type Mapping
 
